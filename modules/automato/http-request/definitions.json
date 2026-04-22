@@ -1,0 +1,31 @@
+{
+  "types": [
+    {
+      "name": "HTTPError",
+      "fields": [
+        { "name": "code", "type": { "kind": "int" } },
+        { "name": "message", "type": { "kind": "string" } }
+      ]
+    }
+  ],
+  "components": [
+    {
+      "name": "fetch",
+      "category": "action",
+      "description": "Fetch a URL and return the body.",
+      "inputs": [
+        {
+          "name": "request",
+          "type": { "kind": "custom", "name": "HTTPRequest" },
+          "consumption": "consumed"
+        }
+      ],
+      "outputs": [
+        { "name": "body", "type": { "kind": "string" } },
+        { "name": "status", "type": { "kind": "int" } }
+      ],
+      "error_type": { "kind": "custom", "name": "HTTPError" },
+      "impl": "Fetch"
+    }
+  ]
+}

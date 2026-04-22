@@ -1,0 +1,19 @@
+{
+  "types": [],
+  "components": [
+    {
+      "name": "build",
+      "category": "pure",
+      "description": "Construct an HTTPRequest.",
+      "inputs": [
+        { "name": "url", "type": { "kind": "string" } },
+        { "name": "method", "type": { "kind": "string" } },
+        { "name": "body", "type": { "kind": "string" } }
+      ],
+      "outputs": [
+        { "name": "request", "type": { "kind": "custom", "name": "HTTPRequest" } }
+      ],
+      "impl": "Build"
+    }
+  ]
+}

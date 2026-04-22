@@ -1,0 +1,20 @@
+[package]
+name = "automato-backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+compiler = { path = "../compiler", package = "automato-compiler" }
+tower-http = { version = "0.5", features = ["cors"] }
+
+[[bin]]
+name = "automato-backend"
+path = "src/main.rs"

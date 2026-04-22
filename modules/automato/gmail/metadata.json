@@ -1,0 +1,11 @@
+{
+  "id": "automato/gmail",
+  "name": "Gmail",
+  "version": "0.1.0",
+  "description": "Send an email via Gmail.",
+  "author": "AuTomato",
+  "license": "MIT",
+  "package": "gmail",
+  "code_files": ["send.go"],
+  "go_dependencies": []
+}

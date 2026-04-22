@@ -1,0 +1,25 @@
+{
+  "types": [
+    {
+      "name": "HTTPRequest",
+      "fields": [
+        { "name": "url", "type": { "kind": "string" } },
+        { "name": "method", "type": { "kind": "string" } },
+        { "name": "body", "type": { "kind": "string" } }
+      ]
+    }
+  ],
+  "components": [
+    {
+      "name": "on_request",
+      "category": "trigger",
+      "trigger_style": "callback",
+      "description": "Fires on every inbound HTTP request.",
+      "inputs": [],
+      "outputs": [
+        { "name": "request", "type": { "kind": "custom", "name": "HTTPRequest" } }
+      ],
+      "impl": "OnRequest"
+    }
+  ]
+}

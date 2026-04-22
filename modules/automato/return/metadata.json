@@ -1,0 +1,11 @@
+{
+  "id": "automato/return",
+  "name": "Return",
+  "version": "0.1.0",
+  "description": "Workflow terminator. Shape depends on the trigger.",
+  "author": "AuTomato",
+  "license": "MIT",
+  "package": "ret",
+  "code_files": ["return.go"],
+  "go_dependencies": []
+}

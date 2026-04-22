@@ -1,0 +1,27 @@
+{
+  "types": [
+    {
+      "name": "Email",
+      "fields": [
+        { "name": "subject", "type": { "kind": "string" } },
+        { "name": "sender", "type": { "kind": "string" } },
+        { "name": "body", "type": { "kind": "string" } }
+      ]
+    }
+  ],
+  "components": [
+    {
+      "name": "send",
+      "category": "action",
+      "description": "Send an email.",
+      "inputs": [
+        { "name": "email", "type": { "kind": "custom", "name": "Email" }, "consumption": "consumed" }
+      ],
+      "outputs": [
+        { "name": "message_id", "type": { "kind": "string" } }
+      ],
+      "error_type": { "kind": "string" },
+      "impl": "Send"
+    }
+  ]
+}

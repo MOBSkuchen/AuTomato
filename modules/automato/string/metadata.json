@@ -1,0 +1,11 @@
+{
+  "id": "automato/string",
+  "name": "String",
+  "version": "0.1.0",
+  "description": "String construction and manipulation.",
+  "author": "AuTomato",
+  "license": "MIT",
+  "package": "strops",
+  "code_files": ["string.go"],
+  "go_dependencies": []
+}

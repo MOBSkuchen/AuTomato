@@ -1,0 +1,11 @@
+{
+  "id": "automato/http-request",
+  "name": "HTTP Request",
+  "version": "0.1.0",
+  "description": "Perform an HTTP request and return the response body.",
+  "author": "AuTomato",
+  "license": "MIT",
+  "package": "httprequest",
+  "code_files": ["fetch.go"],
+  "go_dependencies": []
+}

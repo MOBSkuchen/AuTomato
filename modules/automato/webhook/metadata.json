@@ -1,0 +1,11 @@
+{
+  "id": "automato/webhook",
+  "name": "Webhook",
+  "version": "0.1.0",
+  "description": "HTTP trigger: fires when a request hits the configured path.",
+  "author": "AuTomato",
+  "license": "MIT",
+  "package": "webhook",
+  "code_files": ["webhook.go"],
+  "go_dependencies": []
+}

@@ -1,0 +1,11 @@
+{
+  "id": "automato/cron",
+  "name": "Cron",
+  "version": "0.1.0",
+  "description": "Timer trigger that fires on a cron schedule.",
+  "author": "AuTomato",
+  "license": "MIT",
+  "package": "cron",
+  "code_files": ["cron.go"],
+  "go_dependencies": []
+}

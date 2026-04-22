@@ -1,0 +1,30 @@
+{
+  "types": [],
+  "components": [
+    {
+      "name": "concat",
+      "category": "pure",
+      "description": "Concatenate two strings.",
+      "inputs": [
+        { "name": "a", "type": { "kind": "string" } },
+        { "name": "b", "type": { "kind": "string" } }
+      ],
+      "outputs": [
+        { "name": "out", "type": { "kind": "string" } }
+      ],
+      "impl": "Concat"
+    },
+    {
+      "name": "from_int",
+      "category": "pure",
+      "description": "Format an int as a decimal string.",
+      "inputs": [
+        { "name": "n", "type": { "kind": "int" } }
+      ],
+      "outputs": [
+        { "name": "out", "type": { "kind": "string" } }
+      ],
+      "impl": "FromInt"
+    }
+  ]
+}

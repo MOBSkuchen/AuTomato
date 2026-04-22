@@ -1,0 +1,16 @@
+{
+  "types": [],
+  "components": [
+    {
+      "name": "on_tick",
+      "category": "trigger",
+      "trigger_style": "polling",
+      "description": "Fires at each scheduled tick.",
+      "inputs": [],
+      "outputs": [
+        { "name": "fired_at", "type": { "kind": "string" } }
+      ],
+      "impl": "OnTick"
+    }
+  ]
+}

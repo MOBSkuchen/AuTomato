@@ -1,0 +1,24 @@
+{
+  "types": [],
+  "components": [
+    {
+      "name": "http_response",
+      "category": "return",
+      "description": "Return an HTTP response to the caller.",
+      "inputs": [
+        { "name": "status", "type": { "kind": "int" } },
+        { "name": "body", "type": { "kind": "string" }, "consumption": "consumed" }
+      ],
+      "outputs": [],
+      "impl": "HttpResponse"
+    },
+    {
+      "name": "ok",
+      "category": "return",
+      "description": "Terminate the workflow without a return payload.",
+      "inputs": [],
+      "outputs": [],
+      "impl": "Ok"
+    }
+  ]
+}

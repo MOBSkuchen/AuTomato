@@ -1,0 +1,343 @@
+use crate::ast::*;
+use crate::registry::{ComponentDef, Consumption, ModuleManifest, Registry};
+use anyhow::{anyhow, bail, Result};
+use std::collections::{BTreeMap, HashMap};
+
+pub fn validate(workflow: &Workflow, reg: &Registry) -> Result<()> {
+    let nodes: HashMap<&str, &NodeInstance> =
+        workflow.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+
+    let mut data_in_count: HashMap<(&str, &str), u32> = HashMap::new();
+    let mut data_out_targets: HashMap<(&str, &str), u32> = HashMap::new();
+    let mut exec_out_count: HashMap<(&str, &str), u32> = HashMap::new();
+
+    for e in &workflow.edges {
+        if !nodes.contains_key(e.from_node.as_str()) {
+            bail!("edge {} references unknown from_node '{}'", e.id, e.from_node);
+        }
+        if !nodes.contains_key(e.to_node.as_str()) {
+            bail!("edge {} references unknown to_node '{}'", e.id, e.to_node);
+        }
+        match e.kind {
+            EdgeKind::Data => {
+                *data_in_count
+                    .entry((e.to_node.as_str(), e.to_port.as_str()))
+                    .or_insert(0) += 1;
+                *data_out_targets
+                    .entry((e.from_node.as_str(), e.from_port.as_str()))
+                    .or_insert(0) += 1;
+            }
+            EdgeKind::Exec => {
+                *exec_out_count
+                    .entry((e.from_node.as_str(), e.from_port.as_str()))
+                    .or_insert(0) += 1;
+            }
+        }
+    }
+
+    for ((node, port), n) in &data_in_count {
+        if *n > 1 {
+            bail!(
+                "data port {}.{} has {} incoming edges; at most one is allowed",
+                node,
+                port,
+                n
+            );
+        }
+    }
+
+    for ((node, port), n) in &exec_out_count {
+        if *n > 1 {
+            bail!(
+                "exec source {}.{} has {} outgoing edges; exec sources are strictly 1-to-1",
+                node,
+                port,
+                n
+            );
+        }
+    }
+
+    let mut trigger_count = 0;
+    let mut return_count = 0;
+    for n in &workflow.nodes {
+        let cat = derived_category(n);
+        match cat {
+            Some(NodeCategory::Trigger) => trigger_count += 1,
+            Some(NodeCategory::Return) => return_count += 1,
+            _ => {}
+        }
+        validate_node_against_module(n, reg)?;
+    }
+    if trigger_count != 1 {
+        bail!(
+            "workflow must have exactly one trigger node (found {})",
+            trigger_count
+        );
+    }
+    if return_count == 0 {
+        bail!("workflow must have at least one return node");
+    }
+
+    if let Some(entry) = &workflow.entry {
+        let n = nodes
+            .get(entry.as_str())
+            .copied()
+            .ok_or_else(|| anyhow!("entry '{}' references unknown node", entry))?;
+        if derived_category(n) != Some(NodeCategory::Trigger) {
+            bail!("entry '{}' is not a trigger node", entry);
+        }
+    }
+
+    for e in &workflow.edges {
+        if e.kind != EdgeKind::Data {
+            continue;
+        }
+        let src = nodes[e.from_node.as_str()];
+        let dst = nodes[e.to_node.as_str()];
+        let src_ty = resolve_port_type(src, &e.from_port, /*is_output=*/ true, reg)?;
+        let dst_ty = resolve_port_type(dst, &e.to_port, /*is_output=*/ false, reg)?;
+        if !types_compatible(&src_ty, &dst_ty) {
+            bail!(
+                "edge {}: type mismatch — {}.{} : {} cannot connect to {}.{} : {}",
+                e.id,
+                src.id,
+                e.from_port,
+                show(&src_ty),
+                dst.id,
+                e.to_port,
+                show(&dst_ty)
+            );
+        }
+
+        if let Some(Consumption::Consumed) = consumption_of_input(dst, &e.to_port, reg)? {
+            let fanout = data_out_targets
+                .get(&(e.from_node.as_str(), e.from_port.as_str()))
+                .copied()
+                .unwrap_or(0);
+            if fanout > 1 {
+                bail!(
+                    "edge {}: target input {}.{} is 'consumed' but its source {}.{} fans out to {} edges",
+                    e.id,
+                    dst.id,
+                    e.to_port,
+                    src.id,
+                    e.from_port,
+                    fanout
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn derived_category(node: &NodeInstance) -> Option<NodeCategory> {
+    if let Some(c) = node.category {
+        return Some(c);
+    }
+    match node.kind {
+        NodeKind::Constant => Some(NodeCategory::Pure),
+        NodeKind::Branch | NodeKind::Loop => Some(NodeCategory::Logic),
+        NodeKind::Module => None,
+    }
+}
+
+fn validate_node_against_module(node: &NodeInstance, reg: &Registry) -> Result<()> {
+    match node.kind {
+        NodeKind::Module => {
+            let module = reg.require(&node.module_id)?;
+            module.component(&node.component).ok_or_else(|| {
+                anyhow!(
+                    "node {}: module '{}' has no component '{}'",
+                    node.id,
+                    node.module_id,
+                    node.component
+                )
+            })?;
+        }
+        NodeKind::Constant => {
+            if node.constant_type.is_none() {
+                bail!("constant node {} is missing constant_type", node.id);
+            }
+        }
+        NodeKind::Branch | NodeKind::Loop => {}
+    }
+    Ok(())
+}
+
+fn consumption_of_input(
+    node: &NodeInstance,
+    port: &str,
+    reg: &Registry,
+) -> Result<Option<Consumption>> {
+    if node.kind != NodeKind::Module {
+        return Ok(None);
+    }
+    let module = reg.require(&node.module_id)?;
+    let comp = module
+        .component(&node.component)
+        .ok_or_else(|| anyhow!("node {} references unknown component", node.id))?;
+    Ok(comp
+        .inputs
+        .iter()
+        .find(|p| p.name == port)
+        .and_then(|p| p.consumption.clone()))
+}
+
+pub fn resolve_port_type(
+    node: &NodeInstance,
+    port: &str,
+    is_output: bool,
+    reg: &Registry,
+) -> Result<TypeRef> {
+    match node.kind {
+        NodeKind::Constant => {
+            if !is_output {
+                bail!("constant node {} has no input ports", node.id);
+            }
+            node.constant_type
+                .clone()
+                .ok_or_else(|| anyhow!("constant node {} has no type", node.id))
+        }
+        NodeKind::Branch => {
+            if is_output {
+                bail!(
+                    "branch node {}: output port '{}' is not a data port",
+                    node.id,
+                    port
+                );
+            }
+            if port == "cond" {
+                Ok(TypeRef::Bool)
+            } else {
+                bail!("branch node {} has no input port '{}'", node.id, port)
+            }
+        }
+        NodeKind::Loop => {
+            if is_output {
+                if port == DATA_LOOP_ITEM {
+                    Ok(TypeRef::Any)
+                } else {
+                    bail!("loop node {} has no output port '{}'", node.id, port)
+                }
+            } else if port == "list" {
+                Ok(TypeRef::Array {
+                    of: Box::new(TypeRef::Any),
+                })
+            } else {
+                bail!("loop node {} has no input port '{}'", node.id, port)
+            }
+        }
+        NodeKind::Module => {
+            let module = reg.require(&node.module_id)?;
+            let comp = module
+                .component(&node.component)
+                .ok_or_else(|| anyhow!("node {}: unknown component", node.id))?;
+            module_port_type(node, comp, port, is_output)
+        }
+    }
+}
+
+fn module_port_type(
+    node: &NodeInstance,
+    comp: &ComponentDef,
+    port: &str,
+    is_output: bool,
+) -> Result<TypeRef> {
+    if is_output {
+        if port == DATA_ERRVAL {
+            return comp
+                .error_type
+                .clone()
+                .ok_or_else(|| anyhow!("node {}: __errval__ used but component has no error_type", node.id));
+        }
+        if let Some(input_name) = passthrough_source_input(port) {
+            let pt_input = comp
+                .inputs
+                .iter()
+                .find(|p| p.name == input_name)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "node {}: passthrough port '{}' has no matching input '{}'",
+                        node.id,
+                        port,
+                        input_name
+                    )
+                })?;
+            if pt_input.consumption != Some(Consumption::Passthrough) {
+                bail!(
+                    "node {}: passthrough port '{}' targets input '{}' which is not marked passthrough",
+                    node.id,
+                    port,
+                    input_name
+                );
+            }
+            return Ok(pt_input.ty.clone());
+        }
+        let p = comp
+            .outputs
+            .iter()
+            .find(|p| p.name == port)
+            .ok_or_else(|| {
+                anyhow!(
+                    "node {}: component '{}' has no output port '{}'",
+                    node.id,
+                    comp.name,
+                    port
+                )
+            })?;
+        Ok(p.ty.clone())
+    } else {
+        let p = comp
+            .inputs
+            .iter()
+            .find(|p| p.name == port)
+            .ok_or_else(|| {
+                anyhow!(
+                    "node {}: component '{}' has no input port '{}'",
+                    node.id,
+                    comp.name,
+                    port
+                )
+            })?;
+        Ok(p.ty.clone())
+    }
+}
+
+pub fn types_compatible(src: &TypeRef, dst: &TypeRef) -> bool {
+    match (src, dst) {
+        (_, TypeRef::Any) | (TypeRef::Any, _) => true,
+        (TypeRef::Int, TypeRef::Float) => true,
+        (TypeRef::Int, TypeRef::Int)
+        | (TypeRef::Float, TypeRef::Float)
+        | (TypeRef::String, TypeRef::String)
+        | (TypeRef::Bool, TypeRef::Bool) => true,
+        (TypeRef::Array { of: a }, TypeRef::Array { of: b }) => types_compatible(a, b),
+        (TypeRef::Dict { value: a }, TypeRef::Dict { value: b }) => types_compatible(a, b),
+        (TypeRef::Custom { name: a }, TypeRef::Custom { name: b }) => a == b,
+        _ => false,
+    }
+}
+
+fn show(t: &TypeRef) -> String {
+    match t {
+        TypeRef::Int => "int".to_string(),
+        TypeRef::Float => "float".to_string(),
+        TypeRef::String => "string".to_string(),
+        TypeRef::Bool => "bool".to_string(),
+        TypeRef::Any => "any".to_string(),
+        TypeRef::Array { of } => format!("array<{}>", show(of)),
+        TypeRef::Dict { value } => format!("dict<{}>", show(value)),
+        TypeRef::Custom { name } => name.clone(),
+    }
+}
+
+#[allow(dead_code)]
+fn _unused_btree() -> BTreeMap<String, String> {
+    BTreeMap::new()
+}
+
+#[allow(dead_code)]
+fn _module_alias_probe(m: &ModuleManifest) -> &str {
+    &m.alias
+}

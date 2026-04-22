@@ -1,0 +1,11 @@
+{
+  "id": "automato/http-request-build",
+  "name": "HTTP Request Builder",
+  "version": "0.1.0",
+  "description": "Build an HTTPRequest record from primitives.",
+  "author": "AuTomato",
+  "license": "MIT",
+  "package": "httprequestbuild",
+  "code_files": ["build.go"],
+  "go_dependencies": []
+}

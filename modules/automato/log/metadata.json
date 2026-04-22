@@ -1,0 +1,11 @@
+{
+  "id": "automato/log",
+  "name": "Log",
+  "version": "0.1.0",
+  "description": "Print a string to stdout.",
+  "author": "AuTomato",
+  "license": "MIT",
+  "package": "logmod",
+  "code_files": ["log.go"],
+  "go_dependencies": []
+}

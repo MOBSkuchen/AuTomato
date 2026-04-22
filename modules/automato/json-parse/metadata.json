@@ -1,0 +1,11 @@
+{
+  "id": "automato/json-parse",
+  "name": "JSON Parse",
+  "version": "0.1.0",
+  "description": "Parse a JSON string into a string-keyed dict.",
+  "author": "AuTomato",
+  "license": "MIT",
+  "package": "jsonparse",
+  "code_files": ["parse.go"],
+  "go_dependencies": []
+}

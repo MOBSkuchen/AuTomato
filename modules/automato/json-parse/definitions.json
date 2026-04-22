@@ -1,0 +1,25 @@
+{
+  "types": [
+    {
+      "name": "JSONParseError",
+      "fields": [
+        { "name": "message", "type": { "kind": "string" } }
+      ]
+    }
+  ],
+  "components": [
+    {
+      "name": "parse",
+      "category": "pure",
+      "description": "Parse a JSON string. Non-string leaves are stringified.",
+      "inputs": [
+        { "name": "input", "type": { "kind": "string" }, "consumption": "passthrough" }
+      ],
+      "outputs": [
+        { "name": "value", "type": { "kind": "dict", "value": { "kind": "string" } } }
+      ],
+      "error_type": { "kind": "custom", "name": "JSONParseError" },
+      "impl": "Parse"
+    }
+  ]
+}

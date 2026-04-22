@@ -1,0 +1,15 @@
+{
+  "types": [],
+  "components": [
+    {
+      "name": "info",
+      "category": "action",
+      "description": "Log a string at info level.",
+      "inputs": [
+        { "name": "message", "type": { "kind": "string" }, "consumption": "passthrough" }
+      ],
+      "outputs": [],
+      "impl": "Info"
+    }
+  ]
+}
