@@ -10,11 +10,9 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
-thiserror.workspace = true
-uuid.workspace = true
 compiler = { path = "../compiler", package = "automato-compiler" }
-tower-http = { version = "0.5", features = ["cors"] }
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
+tower-http = { version = "0.6.8", features = ["cors"] }
+zip = { version = "8.5.1", default-features = false, features = ["deflate"] }
 tempfile = "3"
 
 [[bin]]

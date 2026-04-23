@@ -9,13 +9,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::fs::File;
-use std::io::{Read, Write as IoWrite};
+use std::io::{Write as IoWrite};
 use std::net::SocketAddr;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::Command;
-use axum::body::Bytes;
-use zip::write::FileOptions;
+use zip::write::{ExtendedFileOptions, FileOptions, FullFileOptions};
 
 #[derive(Serialize)]
 struct ModuleListing {
@@ -62,7 +60,7 @@ struct BuildOptions {
 
 #[tokio::main]
 async fn main() {
-    let app = Router::new()
+    let app = Router::new().without_v07_checks()
         .route("/health", get(health))
         .route("/modules", get(list_modules))
         .route("/modules/:id", get(get_module))
@@ -169,11 +167,11 @@ async fn do_build(req: BuildRequest) -> Result<Response> {
                 build_binary(tmp.path(), &req.options).context("building binary")?;
             let cursor = std::io::Cursor::new(buf);
             let mut zw = zip::ZipWriter::new(cursor);
-            let opts = FileOptions::default()
+            let opts = FullFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated)
                 .unix_permissions(0o644);
-            zw.add_directory("/", opts)?;
-            zw.start_file(format!("{wf_name}.exe"), Default::default())?;
+            zw.add_directory("/", opts.clone()).context("building ZIP")?;
+            zw.start_file(format!("{wf_name}.exe"), opts).context("building ZIP")?;
             zw.write_all(&bytes)?;
             let cursor = zw.finish()?;
             let ready = cursor.into_inner();
@@ -232,7 +230,7 @@ fn zip_dir(root: &StdPath, archive_root: &str) -> Result<Vec<u8>> {
         let opts = zip::write::FileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
             .unix_permissions(0o644);
-        zw.add_directory(format!("{}/", archive_root), opts)?;
+        zw.add_directory(format!("{}/", archive_root), opts.clone())?;
         zip_visit(root, root, archive_root, &mut zw, &opts)?;
         zw.finish()?;
     }
@@ -244,7 +242,7 @@ fn zip_visit<W: std::io::Write + std::io::Seek>(
     dir: &StdPath,
     archive_root: &str,
     zw: &mut zip::ZipWriter<W>,
-    opts: &zip::write::FileOptions,
+    opts: &FullFileOptions,
 ) -> Result<()> {
     for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let entry = entry?;
@@ -255,10 +253,10 @@ fn zip_visit<W: std::io::Write + std::io::Seek>(
         let rel_str = rel.to_string_lossy().replace('\\', "/");
         let name = format!("{}/{}", archive_root, rel_str);
         if path.is_dir() {
-            zw.add_directory(format!("{}/", name), *opts)?;
-            zip_visit(root, &path, archive_root, zw, opts)?;
+            zw.add_directory(format!("{}/", name), opts.clone())?;
+            zip_visit(root, &path, archive_root, zw, &opts.clone())?;
         } else {
-            zw.start_file(&name, *opts)?;
+            zw.start_file(&name, opts.clone()).with_context(|| format!("starting file {}", name))?;
             let data = fs::read(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
             zw.write_all(&data)?;
