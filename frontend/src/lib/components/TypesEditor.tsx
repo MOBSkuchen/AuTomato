@@ -38,7 +38,9 @@ export default function TypesEditor({ onClose }: Props) {
   const removeCustomType = useWorkflow((s) => s.removeCustomType);
 
   const [name, setName] = useState("");
+  const [draftKind, setDraftKind] = useState<"struct" | "enum">("struct");
   const [draftFields, setDraftFields] = useState<DraftField[]>([]);
+  const [draftVariants, setDraftVariants] = useState<string[]>([]);
 
   const knownCustom = useMemo(() => {
     const fromWorkflow = workflow.customTypes.map((t) => t.name);
@@ -63,20 +65,38 @@ export default function TypesEditor({ onClose }: Props) {
   function save() {
     const trimmed = name.trim();
     if (!trimmed) return;
-    if (draftFields.some((f) => !f.name.trim())) {
-      alert("All fields need a name");
-      return;
+    if (draftKind === "struct") {
+      if (draftFields.some((f) => !f.name.trim())) {
+        alert("All fields need a name");
+        return;
+      }
+      addCustomType({
+        name: trimmed,
+        kind: "struct",
+        fields: draftFields.map((f) => ({
+          name: f.name.trim(),
+          type: fieldToType(f),
+        })),
+      });
+    } else {
+      const variants = draftVariants
+        .map((v) => v.trim())
+        .filter((v) => v.length > 0);
+      if (variants.length === 0) {
+        alert("Enums need at least one variant");
+        return;
+      }
+      const def: CustomTypeDef = {
+        name: trimmed,
+        kind: "enum",
+        fields: [],
+        variants,
+      };
+      addCustomType(def);
     }
-    const def: CustomTypeDef = {
-      name: trimmed,
-      fields: draftFields.map((f) => ({
-        name: f.name.trim(),
-        type: fieldToType(f),
-      })),
-    };
-    addCustomType(def);
     setName("");
     setDraftFields([]);
+    setDraftVariants([]);
   }
 
   function handleRemove(n: string) {
@@ -115,18 +135,48 @@ export default function TypesEditor({ onClose }: Props) {
                 <div className="type-head">
                   <span className="name" style={{ color: "var(--t-custom)" }}>
                     {t.name}
+                    {t.sealed && (
+                      <span
+                        className="source"
+                        style={{ marginLeft: 6, color: "var(--warn)" }}
+                      >
+                        sealed
+                      </span>
+                    )}
+                    {t.kind === "enum" && (
+                      <span
+                        className="source"
+                        style={{ marginLeft: 6, color: "var(--t-bool)" }}
+                      >
+                        enum
+                      </span>
+                    )}
                   </span>
                   <span className="source">{t.sourceModule}</span>
                 </div>
                 <div className="fields">
-                  {t.fields.map((f) => (
-                    <div className="field" key={f.name}>
-                      <span>{f.name}</span>
-                      <span style={{ color: typeColor(f.type) }}>
-                        {typeLabel(f.type)}
-                      </span>
-                    </div>
-                  ))}
+                  {t.kind === "enum"
+                    ? (t.variants ?? []).map((v) => (
+                        <div className="field" key={v}>
+                          <span>{v}</span>
+                        </div>
+                      ))
+                    : t.sealed
+                      ? (
+                          <div className="field">
+                            <span style={{ color: "var(--fg-2)" }}>
+                              (opaque)
+                            </span>
+                          </div>
+                        )
+                      : t.fields.map((f) => (
+                          <div className="field" key={f.name}>
+                            <span>{f.name}</span>
+                            <span style={{ color: typeColor(f.type) }}>
+                              {typeLabel(f.type)}
+                            </span>
+                          </div>
+                        ))}
                 </div>
               </div>
             ))}
@@ -144,20 +194,34 @@ export default function TypesEditor({ onClose }: Props) {
                 <div className="type-head">
                   <span className="name" style={{ color: "var(--t-custom)" }}>
                     {t.name}
+                    {t.kind === "enum" && (
+                      <span
+                        className="source"
+                        style={{ marginLeft: 6, color: "var(--t-bool)" }}
+                      >
+                        enum
+                      </span>
+                    )}
                   </span>
                   <button className="small" onClick={() => handleRemove(t.name)}>
                     remove
                   </button>
                 </div>
                 <div className="fields">
-                  {t.fields.map((f) => (
-                    <div className="field" key={f.name}>
-                      <span>{f.name}</span>
-                      <span style={{ color: typeColor(f.type) }}>
-                        {typeLabel(f.type)}
-                      </span>
-                    </div>
-                  ))}
+                  {t.kind === "enum"
+                    ? (t.variants ?? []).map((v) => (
+                        <div className="field" key={v}>
+                          <span>{v}</span>
+                        </div>
+                      ))
+                    : t.fields.map((f) => (
+                        <div className="field" key={f.name}>
+                          <span>{f.name}</span>
+                          <span style={{ color: typeColor(f.type) }}>
+                            {typeLabel(f.type)}
+                          </span>
+                        </div>
+                      ))}
                 </div>
               </div>
             ))}
@@ -173,11 +237,55 @@ export default function TypesEditor({ onClose }: Props) {
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-            <button onClick={addField}>+ field</button>
+            <select
+              value={draftKind}
+              onChange={(e) =>
+                setDraftKind(e.target.value as "struct" | "enum")
+              }
+            >
+              <option value="struct">struct</option>
+              <option value="enum">enum</option>
+            </select>
+            {draftKind === "struct" ? (
+              <button onClick={addField}>+ field</button>
+            ) : (
+              <button onClick={() => setDraftVariants((v) => [...v, ""])}>
+                + variant
+              </button>
+            )}
             <button className="primary" onClick={save} disabled={!name.trim()}>
               Add type
             </button>
           </div>
+          {draftKind === "enum" && (
+            <div className="draft-fields">
+              {draftVariants.map((v, i) => (
+                <div className="draft-field" key={i}>
+                  <input
+                    type="text"
+                    placeholder="VARIANT"
+                    value={v}
+                    onChange={(e) =>
+                      setDraftVariants((arr) =>
+                        arr.map((x, idx) => (idx === i ? e.target.value : x)),
+                      )
+                    }
+                  />
+                  <button
+                    className="small"
+                    onClick={() =>
+                      setDraftVariants((arr) =>
+                        arr.filter((_, idx) => idx !== i),
+                      )
+                    }
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {draftKind === "struct" && (
           <div className="draft-fields">
             {draftFields.map((field, i) => (
               <div className="draft-field" key={i}>
@@ -218,6 +326,7 @@ export default function TypesEditor({ onClose }: Props) {
               </div>
             ))}
           </div>
+          )}
         </section>
       </div>
     </div>

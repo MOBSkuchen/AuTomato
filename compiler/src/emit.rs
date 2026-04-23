@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::registry::{ComponentDef, Consumption, ModuleManifest, Registry, TriggerStyle};
-use crate::typecheck::derived_category;
+use crate::typecheck::{derived_category, lookup_enum_variants, resolve_struct_type, StructInfo};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -44,6 +44,7 @@ struct BuildPlan {
     trigger_style: TriggerStyle,
     trigger_output_count: usize,
     workflow_params: Vec<(String, String)>,
+    trigger_tweak_args: Vec<String>,
 }
 
 impl<'a> Generator<'a> {
@@ -124,6 +125,7 @@ impl<'a> Generator<'a> {
             let go_ty = self.go_type(&out.ty)?;
             params.push((var, go_ty));
         }
+        let trigger_tweak_args = self.resolve_tweak_args(trigger_node, trigger_comp)?;
         self.emitted_action.insert(trigger_node.id.clone());
 
         if let Some(next) = self
@@ -140,6 +142,7 @@ impl<'a> Generator<'a> {
             trigger_style,
             trigger_output_count: trigger_comp.outputs.len(),
             workflow_params: params,
+            trigger_tweak_args,
         })
     }
 
@@ -182,6 +185,13 @@ impl<'a> Generator<'a> {
                 self.emit_return(node)?;
                 Ok(None)
             }
+            NodeKind::Construct | NodeKind::Destruct => {
+                self.ensure_pure_emitted(node)?;
+                Ok(self
+                    .exec_out
+                    .get(&(node.id.as_str(), EXEC_OUT.to_string()))
+                    .copied())
+            }
             _ => {
                 self.emit_action(node)?;
                 Ok(self
@@ -195,7 +205,8 @@ impl<'a> Generator<'a> {
     fn emit_action(&mut self, node: &'a NodeInstance) -> Result<()> {
         let (module, comp) = self.lookup(node)?;
         self.register_import(module);
-        let args = self.resolve_args(node, comp)?;
+        let mut args = self.resolve_tweak_args(node, comp)?;
+        args.extend(self.resolve_args(node, comp)?);
         self.emit_call(node, module, comp, &args)?;
         self.emitted_action.insert(node.id.clone());
 
@@ -259,7 +270,8 @@ impl<'a> Generator<'a> {
     fn emit_return(&mut self, node: &'a NodeInstance) -> Result<()> {
         let (module, comp) = self.lookup(node)?;
         self.register_import(module);
-        let args = self.resolve_args(node, comp)?;
+        let mut args = self.resolve_tweak_args(node, comp)?;
+        args.extend(self.resolve_args(node, comp)?);
         let nid = sanitize(&node.id);
         let call = format!(
             "{}.{}({})",
@@ -339,6 +351,49 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
+    fn resolve_tweak_args(
+        &mut self,
+        node: &NodeInstance,
+        comp: &ComponentDef,
+    ) -> Result<Vec<String>> {
+        let mut out = Vec::with_capacity(comp.tweaks.len());
+        for t in &comp.tweaks {
+            let supplied = node
+                .tweak_values
+                .get(&t.name)
+                .cloned()
+                .or_else(|| t.default.clone());
+            let val = supplied.ok_or_else(|| {
+                anyhow!(
+                    "node {}: tweak '{}' has no value and no default",
+                    node.id,
+                    t.name
+                )
+            })?;
+            out.push(self.render_literal_val(&val, Some(&t.ty))?);
+        }
+        Ok(out)
+    }
+
+    fn render_literal_val(&self, v: &Value, expected: Option<&TypeRef>) -> Result<String> {
+        if let (Some(TypeRef::Custom { name }), Value::String(s)) = (expected, v) {
+            let variants = lookup_enum_variants(self.wf, self.reg, name);
+            if let Some(vs) = variants {
+                if !vs.iter().any(|vn| vn == s) {
+                    bail!("'{}' is not a variant of enum '{}'", s, name);
+                }
+                let owner = self.reg.type_owner(name);
+                let type_label = pascal(name);
+                let const_name = format!("{}{}", type_label, pascal(s));
+                return Ok(match owner {
+                    Some(m) => format!("{}.{}", m.alias, const_name),
+                    None => const_name,
+                });
+            }
+        }
+        render_literal(v, expected)
+    }
+
     fn resolve_args(
         &mut self,
         node: &'a NodeInstance,
@@ -398,6 +453,22 @@ impl<'a> Generator<'a> {
                 sanitize(&node.id),
                 sanitize(src_port)
             )),
+            NodeKind::Construct => {
+                self.ensure_pure_emitted(node)?;
+                Ok(format!(
+                    "var_{}_{}",
+                    sanitize(&node.id),
+                    sanitize(DATA_CONSTRUCT_OUT)
+                ))
+            }
+            NodeKind::Destruct => {
+                self.ensure_pure_emitted(node)?;
+                Ok(format!(
+                    "var_{}_{}",
+                    sanitize(&node.id),
+                    sanitize(src_port)
+                ))
+            }
             NodeKind::Module => {
                 let cat = derived_category(node);
                 if cat == Some(NodeCategory::Pure) {
@@ -444,7 +515,12 @@ impl<'a> Generator<'a> {
         if self.emitted_constant.insert(node.id.clone()) {
             let ty = node.constant_type.as_ref();
             let val = node.constant_value.clone().unwrap_or(Value::Null);
-            let lit = render_literal(&val, ty)?;
+            if let Some(TypeRef::Custom { name }) = ty {
+                if let Some(owner) = self.reg.type_owner(name) {
+                    self.register_import(owner);
+                }
+            }
+            let lit = self.render_literal_val(&val, ty)?;
             self.line(&format!("{} := {}", var, lit));
             self.line(&format!("_ = {}", var));
         }
@@ -455,12 +531,81 @@ impl<'a> Generator<'a> {
         if !self.emitted_pure.insert(node.id.clone()) {
             return Ok(());
         }
-        let (module, comp) = self.lookup(node)?;
-        self.register_import(module);
-        let args = self.resolve_args(node, comp)?;
-        self.emit_call(node, module, comp, &args)?;
+        match node.kind {
+            NodeKind::Construct => self.emit_construct(node),
+            NodeKind::Destruct => self.emit_destruct(node),
+            _ => {
+                let (module, comp) = self.lookup(node)?;
+                self.register_import(module);
+                let mut args = self.resolve_tweak_args(node, comp)?;
+                args.extend(self.resolve_args(node, comp)?);
+                self.emit_call(node, module, comp, &args)?;
+                self.emitted_action.insert(node.id.clone());
+                Ok(())
+            }
+        }
+    }
+
+    fn emit_construct(&mut self, node: &'a NodeInstance) -> Result<()> {
+        let name = node
+            .target_type
+            .as_ref()
+            .ok_or_else(|| anyhow!("construct node {} missing target_type", node.id))?;
+        let info = resolve_struct_type(self.wf, self.reg, name)?;
+        let go_ty = self.struct_go_type(&info, name)?;
+        let fields = info.fields();
+        let mut parts: Vec<String> = Vec::with_capacity(fields.len());
+        for (fname, fty) in &fields {
+            let expr = self.resolve_port_expr(node, fname, Some(fty))?;
+            parts.push(format!("{}: {}", pascal(fname), expr));
+        }
+        let var = format!("var_{}_{}", sanitize(&node.id), sanitize(DATA_CONSTRUCT_OUT));
+        self.line(&format!(
+            "{} := {}{{{}}}",
+            var,
+            go_ty,
+            parts.join(", ")
+        ));
+        self.line(&format!("_ = {}", var));
         self.emitted_action.insert(node.id.clone());
         Ok(())
+    }
+
+    fn emit_destruct(&mut self, node: &'a NodeInstance) -> Result<()> {
+        let name = node
+            .target_type
+            .as_ref()
+            .ok_or_else(|| anyhow!("destruct node {} missing target_type", node.id))?;
+        let info = resolve_struct_type(self.wf, self.reg, name)?;
+        let input_expr = self.resolve_port_expr(
+            node,
+            DATA_DESTRUCT_IN,
+            Some(&TypeRef::Custom { name: name.clone() }),
+        )?;
+        let tmp = format!("var_{}_{}", sanitize(&node.id), sanitize(DATA_DESTRUCT_IN));
+        self.line(&format!("{} := {}", tmp, input_expr));
+        self.line(&format!("_ = {}", tmp));
+        for (fname, _) in info.fields() {
+            let out_var = format!("var_{}_{}", sanitize(&node.id), sanitize(fname));
+            self.line(&format!("{} := {}.{}", out_var, tmp, pascal(fname)));
+            self.line(&format!("_ = {}", out_var));
+        }
+        self.emitted_action.insert(node.id.clone());
+        Ok(())
+    }
+
+    fn struct_go_type(&mut self, info: &StructInfo<'a>, name: &str) -> Result<String> {
+        match info {
+            StructInfo::Module(_td) => {
+                if let Some(owner) = self.reg.type_owner(name) {
+                    self.register_import(owner);
+                    Ok(format!("{}.{}", owner.alias, pascal(name)))
+                } else {
+                    bail!("cannot locate module for type '{}'", name)
+                }
+            }
+            StructInfo::Workflow(_) => Ok(pascal(name)),
+        }
     }
 
     fn register_import(&mut self, module: &'a ModuleManifest) {
@@ -550,26 +695,32 @@ impl<'a> Generator<'a> {
         let arg_names: Vec<String> = (0..plan.trigger_output_count)
             .map(|i| format!("v{}", i))
             .collect();
+        let mut trigger_call_args = plan.trigger_tweak_args.clone();
         match plan.trigger_style {
             TriggerStyle::Callback => {
+                trigger_call_args.push("WorkflowEntry".to_string());
                 out.push_str(&format!(
-                    "\t{}.{}(WorkflowEntry)\n",
-                    plan.trigger_alias, plan.trigger_fn
+                    "\t{}.{}({})\n",
+                    plan.trigger_alias,
+                    plan.trigger_fn,
+                    trigger_call_args.join(", ")
                 ));
             }
             TriggerStyle::Polling => {
                 out.push_str("\tfor {\n");
+                let call = format!(
+                    "{}.{}({})",
+                    plan.trigger_alias,
+                    plan.trigger_fn,
+                    trigger_call_args.join(", ")
+                );
                 if arg_names.is_empty() {
-                    out.push_str(&format!(
-                        "\t\tok := {}.{}()\n",
-                        plan.trigger_alias, plan.trigger_fn
-                    ));
+                    out.push_str(&format!("\t\tok := {}\n", call));
                 } else {
                     out.push_str(&format!(
-                        "\t\t{}, ok := {}.{}()\n",
+                        "\t\t{}, ok := {}\n",
                         arg_names.join(", "),
-                        plan.trigger_alias,
-                        plan.trigger_fn
+                        call
                     ));
                 }
                 out.push_str("\t\tif !ok {\n\t\t\tcontinue\n\t\t}\n");
@@ -596,11 +747,27 @@ impl<'a> Generator<'a> {
 
 fn emit_custom_type(reg: &Registry, ct: &CustomType) -> String {
     let mut s = String::new();
-    writeln!(s, "type {} struct {{", pascal(&ct.name)).ok();
-    for f in &ct.fields {
-        writeln!(s, "\t{} {}", pascal(&f.name), type_to_go(reg, &f.ty)).ok();
+    match ct.kind {
+        CustomTypeKind::Enum => {
+            let ty = pascal(&ct.name);
+            writeln!(s, "type {} string", ty).ok();
+            if !ct.variants.is_empty() {
+                s.push_str("const (\n");
+                for v in &ct.variants {
+                    writeln!(s, "\t{}{} {} = {:?}", ty, pascal(v), ty, v).ok();
+                }
+                s.push_str(")\n");
+            }
+            writeln!(s, "func (x {}) String() string {{ return string(x) }}", ty).ok();
+        }
+        CustomTypeKind::Struct => {
+            writeln!(s, "type {} struct {{", pascal(&ct.name)).ok();
+            for f in &ct.fields {
+                writeln!(s, "\t{} {}", pascal(&f.name), type_to_go(reg, &f.ty)).ok();
+            }
+            s.push_str("}\n");
+        }
     }
-    s.push_str("}\n");
     s
 }
 

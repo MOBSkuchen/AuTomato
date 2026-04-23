@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"automato.local/automato/webhook"
 )
@@ -15,7 +16,7 @@ type HTTPError struct {
 
 func (e HTTPError) Error() string { return e.Message }
 
-func Fetch(req webhook.HTTPRequest) (string, int64, error) {
+func Fetch(timeoutMS int64, userAgent string, followRedirects bool, req webhook.HTTPRequest) (string, int64, error) {
 	method := req.Method
 	if method == "" {
 		method = "GET"
@@ -24,7 +25,16 @@ func Fetch(req webhook.HTTPRequest) (string, int64, error) {
 	if err != nil {
 		return "", 0, HTTPError{Code: 0, Message: err.Error()}
 	}
-	resp, err := http.DefaultClient.Do(httpReq)
+	if userAgent != "" {
+		httpReq.Header.Set("User-Agent", userAgent)
+	}
+	client := &http.Client{Timeout: time.Duration(timeoutMS) * time.Millisecond}
+	if !followRedirects {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return "", 0, HTTPError{Code: 0, Message: err.Error()}
 	}

@@ -1,15 +1,35 @@
 {
-  "types": [],
+  "types": [
+    {
+      "name": "LogLevel",
+      "kind": "enum",
+      "variants": ["DEBUG", "INFO", "WARN", "ERROR"]
+    }
+  ],
   "components": [
     {
-      "name": "info",
+      "name": "log",
       "category": "action",
-      "description": "Log a string at info level.",
+      "description": "Log a message at the configured level.",
+      "tweaks": [
+        {
+          "name": "level",
+          "description": "Severity of the log entry.",
+          "type": { "kind": "custom", "name": "LogLevel" },
+          "default": "INFO"
+        },
+        {
+          "name": "prefix",
+          "description": "Prefix prepended to every message.",
+          "type": { "kind": "string" },
+          "default": ""
+        }
+      ],
       "inputs": [
         { "name": "message", "type": { "kind": "string" }, "consumption": "passthrough" }
       ],
       "outputs": [],
-      "impl": "Info"
+      "impl": "Log"
     }
   ]
 }

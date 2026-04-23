@@ -7,6 +7,17 @@
         { "name": "method", "type": { "kind": "string" } },
         { "name": "body", "type": { "kind": "string" } }
       ]
+    },
+    {
+      "name": "HTTPMethod",
+      "kind": "enum",
+      "variants": ["GET", "POST", "PUT", "DELETE", "PATCH", "ANY"]
+    },
+    {
+      "name": "HTTPRequestContext",
+      "kind": "struct",
+      "sealed": true,
+      "fields": []
     }
   ],
   "components": [
@@ -14,12 +25,65 @@
       "name": "on_request",
       "category": "trigger",
       "trigger_style": "callback",
-      "description": "Fires on every inbound HTTP request.",
+      "description": "Listens for HTTP requests on the configured address/path/method. Emits the request and a sealed response context that can be used by the `respond` return.",
+      "tweaks": [
+        {
+          "name": "address",
+          "description": "Host:port the server binds to.",
+          "type": { "kind": "string" },
+          "default": ":8080"
+        },
+        {
+          "name": "path",
+          "description": "URL path to register the handler on.",
+          "type": { "kind": "string" },
+          "default": "/"
+        },
+        {
+          "name": "method",
+          "description": "Accepted HTTP method (ANY matches all methods).",
+          "type": { "kind": "custom", "name": "HTTPMethod" },
+          "default": "ANY"
+        }
+      ],
       "inputs": [],
       "outputs": [
-        { "name": "request", "type": { "kind": "custom", "name": "HTTPRequest" } }
+        { "name": "request", "type": { "kind": "custom", "name": "HTTPRequest" } },
+        { "name": "ctx", "type": { "kind": "custom", "name": "HTTPRequestContext" } }
       ],
       "impl": "OnRequest"
+    },
+    {
+      "name": "respond",
+      "category": "return",
+      "description": "Writes an HTTP response for the given request context, then ends the workflow.",
+      "tweaks": [
+        {
+          "name": "content_type",
+          "description": "Content-Type header value.",
+          "type": { "kind": "string" },
+          "default": "text/plain; charset=utf-8"
+        }
+      ],
+      "inputs": [
+        { "name": "ctx", "type": { "kind": "custom", "name": "HTTPRequestContext" }, "consumption": "consumed" },
+        { "name": "status", "type": { "kind": "int" } },
+        { "name": "body", "type": { "kind": "string" }, "consumption": "consumed" }
+      ],
+      "outputs": [],
+      "impl": "Respond"
+    },
+    {
+      "name": "respond_json",
+      "category": "return",
+      "description": "Writes a JSON body with Content-Type application/json and ends the workflow.",
+      "inputs": [
+        { "name": "ctx", "type": { "kind": "custom", "name": "HTTPRequestContext" }, "consumption": "consumed" },
+        { "name": "status", "type": { "kind": "int" } },
+        { "name": "body", "type": { "kind": "string" }, "consumption": "consumed" }
+      ],
+      "outputs": [],
+      "impl": "RespondJSON"
     }
   ]
 }

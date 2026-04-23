@@ -18,8 +18,9 @@ import ModuleNode from "./ModuleNode";
 import ConstantNode from "./ConstantNode";
 import BranchNode from "./BranchNode";
 import LoopNode from "./LoopNode";
+import StructNode from "./StructNode";
 import { useWorkflow } from "../store";
-import { findComponent } from "../registry";
+import { findComponent, findCustomType } from "../registry";
 import { canConnect } from "../typecheck";
 import {
   isExecPort,
@@ -38,6 +39,8 @@ const nodeTypes = {
   constant: ConstantNode,
   branch: BranchNode,
   loop: LoopNode,
+  construct: StructNode,
+  destruct: StructNode,
 };
 
 function nodeType(kind: NodeKind | undefined): string {
@@ -57,6 +60,8 @@ export default function Canvas() {
   const addConstant = useWorkflow((s) => s.addConstant);
   const addBranch = useWorkflow((s) => s.addBranch);
   const addLoop = useWorkflow((s) => s.addLoop);
+  const addConstruct = useWorkflow((s) => s.addConstruct);
+  const addDestruct = useWorkflow((s) => s.addDestruct);
 
   const { screenToFlowPosition } = useReactFlow();
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -153,6 +158,28 @@ export default function Canvas() {
           return node.loopItemType ?? { kind: "any" };
         return undefined;
       }
+      if (kind === "construct" || kind === "destruct") {
+        const tName = node.targetType;
+        if (!tName) return undefined;
+        const td =
+          findCustomType(tName) ??
+          wf.customTypes.find((t) => t.name === tName);
+        if (!td || td.kind === "enum" || td.sealed) return undefined;
+        if ((td.kind ?? "struct") !== "struct") return undefined;
+        if (kind === "construct") {
+          if (side === "source" && port === "value")
+            return { kind: "custom", name: tName };
+          if (side === "target") {
+            return td.fields.find((f) => f.name === port)?.type;
+          }
+          return undefined;
+        }
+        if (side === "target" && port === "value")
+          return { kind: "custom", name: tName };
+        if (side === "source")
+          return td.fields.find((f) => f.name === port)?.type;
+        return undefined;
+      }
 
       const comp = findComponent(node.moduleId, node.componentName);
       if (!comp) return undefined;
@@ -170,7 +197,7 @@ export default function Canvas() {
       }
       return comp.inputs.find((i) => i.name === port)?.type;
     },
-    [wf.nodes],
+    [wf.nodes, wf.customTypes],
   );
 
   const isValidConnection = useCallback<IsValidConnection>(
@@ -327,9 +354,21 @@ export default function Canvas() {
         return;
       }
       if (moduleId === "__constant__") {
-        const t = parseConstantType(componentName);
+        const t =
+          parseConstantType(componentName) ??
+          (componentName
+            ? ({ kind: "custom", name: componentName } as WorkflowType)
+            : null);
         if (!t) return;
         setSelected(addConstant(t, position).id);
+        return;
+      }
+      if (moduleId === "__construct__") {
+        setSelected(addConstruct(componentName || undefined, position).id);
+        return;
+      }
+      if (moduleId === "__destruct__") {
+        setSelected(addDestruct(componentName || undefined, position).id);
         return;
       }
       const node = addModuleNode(moduleId, componentName, position);
@@ -344,6 +383,8 @@ export default function Canvas() {
       addBranch,
       addLoop,
       addConstant,
+      addConstruct,
+      addDestruct,
       addModuleNode,
       setSelected,
       flashInvalid,

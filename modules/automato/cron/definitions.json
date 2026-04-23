@@ -1,11 +1,31 @@
 {
-  "types": [],
+  "types": [
+    {
+      "name": "CronUnit",
+      "kind": "enum",
+      "variants": ["ms", "s", "m", "h"]
+    }
+  ],
   "components": [
     {
       "name": "on_tick",
       "category": "trigger",
       "trigger_style": "polling",
-      "description": "Fires at each scheduled tick.",
+      "description": "Fires at each scheduled tick; emits an RFC3339 timestamp.",
+      "tweaks": [
+        {
+          "name": "interval",
+          "description": "Interval value (combined with unit).",
+          "type": { "kind": "int" },
+          "default": 1
+        },
+        {
+          "name": "unit",
+          "description": "Time unit for the interval.",
+          "type": { "kind": "custom", "name": "CronUnit" },
+          "default": "s"
+        }
+      ],
       "inputs": [],
       "outputs": [
         { "name": "fired_at", "type": { "kind": "string" } }

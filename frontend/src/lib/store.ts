@@ -15,7 +15,7 @@ import {
   isPassthroughHandle,
   passthroughSourceInput,
 } from "./types";
-import { findComponent } from "./registry";
+import { findComponent, findCustomType } from "./registry";
 
 const STORAGE_KEY = "automato.workflow.v2";
 
@@ -83,6 +83,16 @@ export interface WorkflowState {
   ) => NodeInstance;
   addBranch: (position: { x: number; y: number }) => NodeInstance;
   addLoop: (position: { x: number; y: number }) => NodeInstance;
+  addConstruct: (
+    typeName: string | undefined,
+    position: { x: number; y: number },
+  ) => NodeInstance;
+  addDestruct: (
+    typeName: string | undefined,
+    position: { x: number; y: number },
+  ) => NodeInstance;
+  setTargetType: (nodeId: string, typeName: string) => void;
+  setTweakValue: (nodeId: string, name: string, value: unknown) => void;
   removeNode: (id: string) => void;
   moveNode: (id: string, position: { x: number; y: number }) => void;
   resizeNode: (
@@ -150,13 +160,21 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
   },
 
   addConstant: (type, position) => {
+    let initial: string | number | boolean = defaultConstantValue(type);
+    if (type.kind === "custom") {
+      const t = findCustomType(type.name) ??
+        get().workflow.customTypes.find((ct) => ct.name === type.name);
+      if (t?.kind === "enum" && t.variants && t.variants.length > 0) {
+        initial = t.variants[0];
+      }
+    }
     const node: NodeInstance = {
       id: newId("n"),
       moduleId: "__constant__",
-      componentName: type.kind,
+      componentName: type.kind === "custom" ? type.name : type.kind,
       kind: "constant",
       constantType: type,
-      constantValue: defaultConstantValue(type),
+      constantValue: initial,
       position,
       literalInputs: {},
     };
@@ -189,6 +207,56 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
     };
     mutate(set, (wf) => ({ ...wf, nodes: [...wf.nodes, node] }));
     return node;
+  },
+
+  addConstruct: (typeName, position) => {
+    const node: NodeInstance = {
+      id: newId("n"),
+      moduleId: "__construct__",
+      componentName: typeName ?? "",
+      kind: "construct",
+      targetType: typeName,
+      position,
+      literalInputs: {},
+    };
+    mutate(set, (wf) => ({ ...wf, nodes: [...wf.nodes, node] }));
+    return node;
+  },
+
+  addDestruct: (typeName, position) => {
+    const node: NodeInstance = {
+      id: newId("n"),
+      moduleId: "__destruct__",
+      componentName: typeName ?? "",
+      kind: "destruct",
+      targetType: typeName,
+      position,
+      literalInputs: {},
+    };
+    mutate(set, (wf) => ({ ...wf, nodes: [...wf.nodes, node] }));
+    return node;
+  },
+
+  setTargetType: (nodeId, typeName) => {
+    mutate(set, (wf) => ({
+      ...wf,
+      nodes: wf.nodes.map((n) =>
+        n.id === nodeId ? { ...n, targetType: typeName, componentName: typeName } : n,
+      ),
+    }));
+  },
+
+  setTweakValue: (nodeId, name, value) => {
+    mutate(set, (wf) => ({
+      ...wf,
+      nodes: wf.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const next = { ...(n.tweakValues ?? {}) };
+        if (value === undefined) delete next[name];
+        else next[name] = value;
+        return { ...n, tweakValues: next };
+      }),
+    }));
   },
 
   removeNode: (id) => {
@@ -361,6 +429,7 @@ export function nodeCategory(node: NodeInstance): string | undefined {
   const kind: NodeKind = node.kind ?? "module";
   if (kind === "constant") return "pure";
   if (kind === "branch" || kind === "loop") return "logic";
+  if (kind === "construct" || kind === "destruct") return "pure";
   const comp = findComponent(node.moduleId, node.componentName);
   return comp?.category;
 }

@@ -1,8 +1,13 @@
 # AuTomato
 
-Self-hosted, developer-centered workflow automation platform. Workflows are designed visually, **compiled to Go source code**, and exported as standalone projects or Docker containers — no long-running orchestrator, no runtime editor dependency.
+Self-hosted, developer-centered workflow automation platform. Workflows are designed visually, **compiled to source code** (currently Go, but may be expanded), and exported as:
+- Standalone projects 
+- Docker containers
+- Read OOB binaries
 
-See [`PROJECT_SPEC.md`](docs/PROJECT_SPEC.md) for the full design. This README is a quickstart.
+no long-running orchestrator, no runtime editor dependency.
+
+See [`PROJECT_SPEC.md`](docs/PROJECT_SPEC.md) (Note: Documentation may become outdated during development) for the full design. This README is a quickstart.
 
 ## Status
 
@@ -11,8 +16,7 @@ Early MVP. What works today:
 - **Frontend editor** (`frontend/`) — React 18 + Vite. Functional node-graph editor: palette, typed connections, config panel, custom-type editor, error-branch enforcement, retry policy UI, localStorage autosave, AST export.
 - **Compiler** (`compiler/`) — AST types defined; Stage 1 (AST → canonical JSON) working. Stage 2 (AST → Go project) stubbed.
 - **Backend** (`backend/`) — `axum` skeleton with `/health`, `/modules`, `/compile` routes. Persistence and archive storage not wired yet.
-- **Runtime** (`runtime/`) — Go support library with `Result[T, E]` and `WithRetry`. Imported by future generated projects.
-- **Modules** (`modules/`) — Three example modules: `http-request`, `json-parse`, `log`.
+- **Modules** (`modules/`) — Builtin and example modules.
 
 See each component's `DOCS.md` for the current state and roadmap.
 
@@ -66,7 +70,10 @@ Per the project convention, source code carries no inline comments; all explanat
 
 ## Roadmap (short)
 
-1. Compiler Stage 2: emit a runnable Go project from an AST.
-2. Backend: SQLite persistence + module zip upload endpoint.
-3. Frontend: debugging view against the runtime's debug API.
-4. Module registry wired to `modules/` at dev time; uploaded archives in prod.
+1. Add configurable components
+2. Module registry wired to `modules/` at dev time; uploaded archives in prod.
+3. Make modules downloadable via a single URL
+4. Add more basic modules
+5. Add AI integration
+6. Be able to AI generate a module from an API documentation
+7. Automate away every single Integration Engineers job

@@ -1,4 +1,4 @@
-use crate::ast::TypeRef;
+use crate::ast::{CustomTypeKind, TypeRef};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -44,7 +44,14 @@ struct RawDefinitions {
 #[derive(Debug, Clone, Deserialize)]
 struct RawTypeDecl {
     name: String,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
     fields: Vec<RawField>,
+    #[serde(default)]
+    variants: Vec<String>,
+    #[serde(default)]
+    sealed: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -71,6 +78,8 @@ struct RawComponent {
     error_type: Option<TypeRef>,
     #[serde(rename = "impl")]
     implementation: String,
+    #[serde(default)]
+    tweaks: Vec<RawTweak>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -80,6 +89,17 @@ struct RawPort {
     ty: TypeRef,
     #[serde(default)]
     consumption: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawTweak {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(rename = "type")]
+    ty: TypeRef,
+    #[serde(default)]
+    default: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +113,14 @@ pub struct PortDef {
     pub name: String,
     pub ty: TypeRef,
     pub consumption: Option<Consumption>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TweakDef {
+    pub name: String,
+    pub description: String,
+    pub ty: TypeRef,
+    pub default: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,12 +139,16 @@ pub struct ComponentDef {
     pub outputs: Vec<PortDef>,
     pub error_type: Option<TypeRef>,
     pub impl_function: String,
+    pub tweaks: Vec<TweakDef>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
     pub name: String,
+    pub kind: CustomTypeKind,
     pub fields: Vec<PortDef>,
+    pub variants: Vec<String>,
+    pub sealed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -210,6 +242,12 @@ impl Registry {
         self.modules.get(mid)
     }
 
+    pub fn type_decl(&self, type_name: &str) -> Option<(&ModuleManifest, &TypeDecl)> {
+        let m = self.type_owner(type_name)?;
+        let td = m.types.iter().find(|t| t.name == type_name)?;
+        Some((m, td))
+    }
+
     pub fn modules(&self) -> impl Iterator<Item = &ModuleManifest> {
         self.modules.values()
     }
@@ -258,11 +296,44 @@ fn load_manifest(dir: &Path, meta: &Path, defs: &Path) -> Result<ModuleManifest>
         );
     }
 
-    let types: Vec<TypeDecl> = defs_raw
-        .types
-        .into_iter()
-        .map(|t| TypeDecl {
+    let mut types: Vec<TypeDecl> = Vec::with_capacity(defs_raw.types.len());
+    for t in defs_raw.types {
+        let kind = match t.kind.as_deref() {
+            None | Some("struct") => CustomTypeKind::Struct,
+            Some("enum") => CustomTypeKind::Enum,
+            Some(other) => bail!(
+                "module '{}': type '{}' has unknown kind '{}'",
+                meta_raw.id,
+                t.name,
+                other
+            ),
+        };
+        if kind == CustomTypeKind::Enum {
+            if t.variants.is_empty() {
+                bail!(
+                    "module '{}': enum '{}' declares no variants",
+                    meta_raw.id,
+                    t.name
+                );
+            }
+            if !t.fields.is_empty() {
+                bail!(
+                    "module '{}': enum '{}' may not declare fields",
+                    meta_raw.id,
+                    t.name
+                );
+            }
+            if t.sealed {
+                bail!(
+                    "module '{}': enum '{}' cannot be sealed",
+                    meta_raw.id,
+                    t.name
+                );
+            }
+        }
+        types.push(TypeDecl {
             name: t.name,
+            kind,
             fields: t
                 .fields
                 .into_iter()
@@ -272,8 +343,10 @@ fn load_manifest(dir: &Path, meta: &Path, defs: &Path) -> Result<ModuleManifest>
                     consumption: None,
                 })
                 .collect(),
-        })
-        .collect();
+            variants: t.variants,
+            sealed: t.sealed,
+        });
+    }
 
     let mut components = HashMap::new();
     for c in defs_raw.components {
@@ -298,6 +371,16 @@ fn load_manifest(dir: &Path, meta: &Path, defs: &Path) -> Result<ModuleManifest>
             .into_iter()
             .map(|p| port_from_raw(&meta_raw.id, &c.name, p))
             .collect::<Result<_>>()?;
+        let tweaks: Vec<TweakDef> = c
+            .tweaks
+            .into_iter()
+            .map(|t| TweakDef {
+                name: t.name,
+                description: t.description,
+                ty: t.ty,
+                default: t.default,
+            })
+            .collect();
         components.insert(
             c.name.clone(),
             ComponentDef {
@@ -309,6 +392,7 @@ fn load_manifest(dir: &Path, meta: &Path, defs: &Path) -> Result<ModuleManifest>
                 outputs,
                 error_type: c.error_type,
                 impl_function: c.implementation,
+                tweaks,
             },
         );
     }

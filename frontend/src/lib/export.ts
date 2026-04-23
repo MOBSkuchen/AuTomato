@@ -9,8 +9,11 @@ export function exportAst(workflow: Workflow): unknown {
     version: workflow.version,
     custom_types: workflow.customTypes.map((t) => ({
       name: t.name,
+      kind: t.kind ?? "struct",
       fields: t.fields.map((f) => ({ name: f.name, type: f.type })),
+      variants: t.variants ?? [],
       source_module: t.sourceModule ?? null,
+      sealed: !!t.sealed,
     })),
     nodes: workflow.nodes.map((n) => {
       const mod = findModule(n.moduleId);
@@ -29,6 +32,8 @@ export function exportAst(workflow: Workflow): unknown {
         constant_type: n.constantType ?? null,
         constant_value: n.constantValue ?? null,
         has_error: !!comp?.errorType,
+        target_type: n.targetType ?? null,
+        tweak_values: n.tweakValues ?? {},
       };
     }),
     edges: workflow.edges.map((e) => ({

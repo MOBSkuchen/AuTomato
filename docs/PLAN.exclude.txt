@@ -1,0 +1,40 @@
+- Make nodes move fluidly
+Node rework:
+- The types "return" and "trigger" are supposed to be TYPES not specific nodes.
+  Currently, there is a node "Trigger" and a node "Return", but I want to change it so that
+  a node like HttpRequest is a trigger node.
+  The concept behind this is that the workflow compiles to a routine which checks for an event defined for
+  this trigger node and then calls the function representing the rest of the workflow.
+  Thus, this node takes no input as it is the very beginning of state and it gives outputs, which
+  are the arguments it gives to the workflow function.
+
+  This means that the return node effectively compiles to this:
+    "return RETURN_NODE_FUNCTION(...inputs...)"
+- Introduce logic nodes:
+    - branches (if statements)
+    - loops
+  These nodes are their own types like for example return nodes
+- Introduce a way to call a function / node with no inputs
+- Introduce a way to chain multiple inputs to multiple nodes.
+  Currently every output of a node goes to exactly one input.
+  However, we may want to log a string and then give it to another function.
+
+  This also requires a way to regulate execution order for nodes.
+
+Concept for control flow:
+  A specific control flow connection.
+  This is a connection which regulates what nodes to execute. It originated in a trigger node and is terminated in a
+  return node. It can only be split on nodes which return one of X different things.
+  This fixes the function with no input problem too.
+  Connecting this control flow connection to a node requires that all nodes which it gets its inputs from have been called
+  before it.
+
+Concept for multiple nodes with the same input data.
+  There are two kinds of inputs. A passthrough value and a consumed value.
+  A consumed value is given as an input and is consumed by the function / node.
+  A passthrough value is given as an input and then returned again.
+
+  This can be imagined like a Rust function. A passthrough value is a borrow and a
+  consumed value is the literal instance / value.
+
+claude --resume 326b927e-a95f-4e4e-bc25-93d49ca5e15b

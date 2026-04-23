@@ -12,7 +12,27 @@
     {
       "name": "fetch",
       "category": "action",
-      "description": "Fetch a URL and return the body.",
+      "description": "Perform an HTTP request and return the response body + status.",
+      "tweaks": [
+        {
+          "name": "timeout_ms",
+          "description": "Per-request timeout in milliseconds.",
+          "type": { "kind": "int" },
+          "default": 30000
+        },
+        {
+          "name": "user_agent",
+          "description": "User-Agent header value.",
+          "type": { "kind": "string" },
+          "default": "AuTomato/0.2"
+        },
+        {
+          "name": "follow_redirects",
+          "description": "Whether to follow 3xx redirects automatically.",
+          "type": { "kind": "bool" },
+          "default": true
+        }
+      ],
       "inputs": [
         {
           "name": "request",

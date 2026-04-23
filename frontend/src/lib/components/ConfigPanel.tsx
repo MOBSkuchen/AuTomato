@@ -1,12 +1,19 @@
 import { useMemo } from "react";
 import { useWorkflow } from "../store";
-import { findComponent, findModule } from "../registry";
+import {
+  findComponent,
+  findModule,
+  findCustomType,
+  allKnownCustomTypes,
+} from "../registry";
 import {
   typeColor,
   typeLabel,
   EXEC_ERR,
   type NodeKind,
   type WorkflowType,
+  type TweakDef,
+  type CustomTypeDef,
 } from "../types";
 
 function isPrimitive(k: WorkflowType["kind"]): boolean {
@@ -20,6 +27,8 @@ export default function ConfigPanel() {
   const setLiteralInput = useWorkflow((s) => s.setLiteralInput);
   const setConstantValue = useWorkflow((s) => s.setConstantValue);
   const setRetryPolicy = useWorkflow((s) => s.setRetryPolicy);
+  const setTargetType = useWorkflow((s) => s.setTargetType);
+  const setTweakValue = useWorkflow((s) => s.setTweakValue);
 
   const node = useMemo(
     () => workflow.nodes.find((n) => n.id === selectedNodeId) ?? null,
@@ -29,7 +38,33 @@ export default function ConfigPanel() {
   const nodeKind: NodeKind | null = node ? node.kind ?? "module" : null;
   const isBuiltin =
     !!node &&
-    (nodeKind === "constant" || nodeKind === "branch" || nodeKind === "loop");
+    (nodeKind === "constant" ||
+      nodeKind === "branch" ||
+      nodeKind === "loop" ||
+      nodeKind === "construct" ||
+      nodeKind === "destruct");
+
+  const allTypes: CustomTypeDef[] = useMemo(() => {
+    const fromModules = allKnownCustomTypes();
+    const seen = new Set(fromModules.map((t) => t.name));
+    const out = [...fromModules];
+    for (const t of workflow.customTypes) {
+      if (!seen.has(t.name)) out.push(t);
+    }
+    return out;
+  }, [workflow.customTypes]);
+
+  const availableStructTargets = allTypes.filter(
+    (t) => (t.kind ?? "struct") === "struct" && !t.sealed,
+  );
+  const availableEnumTypes = allTypes.filter((t) => t.kind === "enum");
+
+  const enumForType = (ty: WorkflowType): CustomTypeDef | undefined => {
+    if (ty.kind !== "custom") return undefined;
+    const t = findCustomType(ty.name) ??
+      workflow.customTypes.find((ct) => ct.name === ty.name);
+    return t?.kind === "enum" ? t : undefined;
+  };
 
   const comp =
     node && nodeKind === "module"
@@ -110,13 +145,21 @@ export default function ConfigPanel() {
         ? "Constant"
         : nodeKind === "branch"
           ? "Branch"
-          : "Loop";
+          : nodeKind === "loop"
+            ? "Loop"
+            : nodeKind === "construct"
+              ? "Construct"
+              : "Destruct";
     const subtitle =
       nodeKind === "constant"
         ? "Literal value with no inputs."
         : nodeKind === "branch"
           ? "Forks control flow on a boolean condition."
-          : "Iterates over an array; body runs per item, done runs after.";
+          : nodeKind === "loop"
+            ? "Iterates over an array; body runs per item, done runs after."
+            : nodeKind === "construct"
+              ? "Builds a struct from its field inputs."
+              : "Splits a struct into per-field outputs.";
     return (
       <aside className="config">
         <header>
@@ -138,6 +181,29 @@ export default function ConfigPanel() {
           </div>
         </section>
 
+        {(nodeKind === "construct" || nodeKind === "destruct") && (
+          <section>
+            <h3>Target type</h3>
+            <select
+              value={node.targetType ?? ""}
+              onChange={(e) => setTargetType(node.id, e.target.value)}
+            >
+              <option value="">(pick a struct type)</option>
+              {availableStructTargets.map((t) => (
+                <option key={t.name} value={t.name}>
+                  {t.name}
+                  {t.sourceModule ? ` · ${t.sourceModule}` : ""}
+                </option>
+              ))}
+            </select>
+            {availableStructTargets.length === 0 && (
+              <div className="muted" style={{ marginTop: 6 }}>
+                No struct types available. Open the Types editor to add one.
+              </div>
+            )}
+          </section>
+        )}
+
         {nodeKind === "constant" && node.constantType && (
           <section>
             <h3>Value</h3>
@@ -147,7 +213,22 @@ export default function ConfigPanel() {
                 {typeLabel(node.constantType)}
               </span>
             </div>
-            {node.constantType.kind === "bool" ? (
+            {enumForType(node.constantType) ? (
+              <select
+                value={
+                  typeof node.constantValue === "string"
+                    ? node.constantValue
+                    : ""
+                }
+                onChange={(e) => setConstantValue(node.id, e.target.value)}
+              >
+                {(enumForType(node.constantType)!.variants ?? []).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            ) : node.constantType.kind === "bool" ? (
               <label className="checkbox">
                 <input
                   type="checkbox"
@@ -240,6 +321,25 @@ export default function ConfigPanel() {
           </code>
         </div>
       </section>
+
+      {comp.tweaks && comp.tweaks.length > 0 && (
+        <section>
+          <h3>Tweaks</h3>
+          {comp.tweaks.map((t) => (
+            <TweakRow
+              key={t.name}
+              tweak={t}
+              value={
+                node.tweakValues?.[t.name] !== undefined
+                  ? node.tweakValues[t.name]
+                  : t.default
+              }
+              onChange={(v) => setTweakValue(node.id, t.name, v)}
+              enumDef={enumForType(t.type)}
+            />
+          ))}
+        </section>
+      )}
 
       <section>
         <h3>Inputs</h3>
@@ -416,5 +516,72 @@ export default function ConfigPanel() {
         </button>
       </footer>
     </aside>
+  );
+}
+
+interface TweakRowProps {
+  tweak: TweakDef;
+  value: unknown;
+  onChange: (v: unknown) => void;
+  enumDef?: CustomTypeDef;
+}
+
+function TweakRow({ tweak, value, onChange, enumDef }: TweakRowProps) {
+  const ty = tweak.type;
+  const color = typeColor(ty);
+  return (
+    <div className="input-row">
+      <div className="input-head">
+        <span className="in-name">{tweak.name}</span>
+        <span className="in-ty" style={{ color }}>
+          {typeLabel(ty)}
+        </span>
+        <span className="pill literal">tweak</span>
+      </div>
+      {tweak.description && (
+        <div className="muted" style={{ fontSize: 11, fontStyle: "normal" }}>
+          {tweak.description}
+        </div>
+      )}
+      {enumDef ? (
+        <select
+          value={typeof value === "string" ? value : ""}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {(enumDef.variants ?? []).map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      ) : ty.kind === "bool" ? (
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={!!value}
+            onChange={(e) => onChange(e.target.checked)}
+          />
+          <span>{value ? "true" : "false"}</span>
+        </label>
+      ) : ty.kind === "int" || ty.kind === "float" ? (
+        <input
+          type="number"
+          step={ty.kind === "float" ? "any" : "1"}
+          value={typeof value === "number" ? value : ""}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") return;
+            const n = ty.kind === "int" ? parseInt(raw, 10) : parseFloat(raw);
+            if (!Number.isNaN(n)) onChange(n);
+          }}
+        />
+      ) : (
+        <input
+          type="text"
+          value={typeof value === "string" ? value : ""}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </div>
   );
 }

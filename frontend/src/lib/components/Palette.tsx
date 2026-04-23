@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { MODULES } from "../registry";
+import { MODULES, allKnownCustomTypes } from "../registry";
+import { useWorkflow } from "../store";
 import { typeColor, typeLabel, type ModuleDef, type WorkflowType } from "../types";
 
 function startDrag(
@@ -31,6 +32,25 @@ function categorySortKey(name: string): string {
 export default function Palette() {
   const [search, setSearch] = useState("");
   const [expandedDocs, setExpandedDocs] = useState<string | null>(null);
+  const workflowTypes = useWorkflow((s) => s.workflow.customTypes);
+
+  const enumTypes = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { name: string; sourceModule?: string }[] = [];
+    for (const t of allKnownCustomTypes()) {
+      if (t.kind === "enum" && !seen.has(t.name)) {
+        seen.add(t.name);
+        out.push({ name: t.name, sourceModule: t.sourceModule });
+      }
+    }
+    for (const t of workflowTypes) {
+      if (t.kind === "enum" && !seen.has(t.name)) {
+        seen.add(t.name);
+        out.push({ name: t.name });
+      }
+    }
+    return out;
+  }, [workflowTypes]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -104,6 +124,38 @@ export default function Palette() {
                 <div className="bi-sig">for each · body + done</div>
               </div>
             </div>
+            <div
+              className="builtin constant"
+              draggable
+              role="button"
+              tabIndex={0}
+              onDragStart={(ev) => startDrag(ev, "__construct__", "")}
+              title="Drop, then pick a custom struct type in the right panel"
+            >
+              <span className="bi-icon" style={{ color: "var(--t-custom)" }}>
+                ⊞
+              </span>
+              <div className="bi-body">
+                <div className="bi-name">Construct</div>
+                <div className="bi-sig">fields → struct</div>
+              </div>
+            </div>
+            <div
+              className="builtin constant"
+              draggable
+              role="button"
+              tabIndex={0}
+              onDragStart={(ev) => startDrag(ev, "__destruct__", "")}
+              title="Drop, then pick a custom struct type in the right panel"
+            >
+              <span className="bi-icon" style={{ color: "var(--t-custom)" }}>
+                ⊟
+              </span>
+              <div className="bi-body">
+                <div className="bi-name">Destruct</div>
+                <div className="bi-sig">struct → fields</div>
+              </div>
+            </div>
             {CONSTANT_KINDS.map(({ kind }) => {
               const t: WorkflowType = { kind } as WorkflowType;
               return (
@@ -122,6 +174,34 @@ export default function Palette() {
                     <div className="bi-name">const {kind}</div>
                     <div className="bi-sig" style={{ color: typeColor(t) }}>
                       {typeLabel(t)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {enumTypes.map((e) => {
+              const t: WorkflowType = { kind: "custom", name: e.name };
+              return (
+                <div
+                  key={"enum-" + e.name}
+                  className="builtin constant"
+                  draggable
+                  role="button"
+                  tabIndex={0}
+                  onDragStart={(ev) => startDrag(ev, "__constant__", e.name)}
+                  title={
+                    e.sourceModule
+                      ? `Enum from ${e.sourceModule}`
+                      : "Workflow-local enum"
+                  }
+                >
+                  <span className="bi-icon" style={{ color: typeColor(t) }}>
+                    ◆
+                  </span>
+                  <div className="bi-body">
+                    <div className="bi-name">const {e.name}</div>
+                    <div className="bi-sig" style={{ color: typeColor(t) }}>
+                      enum
                     </div>
                   </div>
                 </div>

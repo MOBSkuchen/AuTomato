@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::registry::{ComponentDef, Consumption, ModuleManifest, Registry};
+use crate::registry::{ComponentDef, Consumption, ModuleManifest, Registry, TweakDef, TypeDecl};
 use anyhow::{anyhow, bail, Result};
 use std::collections::{BTreeMap, HashMap};
 
@@ -66,7 +66,7 @@ pub fn validate(workflow: &Workflow, reg: &Registry) -> Result<()> {
             Some(NodeCategory::Return) => return_count += 1,
             _ => {}
         }
-        validate_node_against_module(n, reg)?;
+        validate_node_against_module(n, workflow, reg)?;
     }
     if trigger_count != 1 {
         bail!(
@@ -94,8 +94,8 @@ pub fn validate(workflow: &Workflow, reg: &Registry) -> Result<()> {
         }
         let src = nodes[e.from_node.as_str()];
         let dst = nodes[e.to_node.as_str()];
-        let src_ty = resolve_port_type(src, &e.from_port, /*is_output=*/ true, reg)?;
-        let dst_ty = resolve_port_type(dst, &e.to_port, /*is_output=*/ false, reg)?;
+        let src_ty = resolve_port_type(src, &e.from_port, /*is_output=*/ true, workflow, reg)?;
+        let dst_ty = resolve_port_type(dst, &e.to_port, /*is_output=*/ false, workflow, reg)?;
         if !types_compatible(&src_ty, &dst_ty) {
             bail!(
                 "edge {}: type mismatch — {}.{} : {} cannot connect to {}.{} : {}",
@@ -138,15 +138,157 @@ pub fn derived_category(node: &NodeInstance) -> Option<NodeCategory> {
     match node.kind {
         NodeKind::Constant => Some(NodeCategory::Pure),
         NodeKind::Branch | NodeKind::Loop => Some(NodeCategory::Logic),
+        NodeKind::Construct | NodeKind::Destruct => Some(NodeCategory::Pure),
         NodeKind::Module => None,
     }
 }
 
-fn validate_node_against_module(node: &NodeInstance, reg: &Registry) -> Result<()> {
+pub fn resolve_struct_type<'a>(
+    workflow: &'a Workflow,
+    reg: &'a Registry,
+    name: &str,
+) -> Result<StructInfo<'a>> {
+    if let Some((_m, td)) = reg.type_decl(name) {
+        if td.sealed {
+            bail!("type '{}' is sealed and cannot be constructed/destructed", name);
+        }
+        if td.kind != CustomTypeKind::Struct {
+            bail!("type '{}' is not a struct type", name);
+        }
+        return Ok(StructInfo::Module(td));
+    }
+    if let Some(ct) = workflow.custom_types.iter().find(|t| t.name == name) {
+        if ct.sealed {
+            bail!("type '{}' is sealed", name);
+        }
+        if ct.kind != CustomTypeKind::Struct {
+            bail!("type '{}' is not a struct type", name);
+        }
+        return Ok(StructInfo::Workflow(ct));
+    }
+    bail!("unknown custom type '{}'", name)
+}
+
+pub enum StructInfo<'a> {
+    Module(&'a TypeDecl),
+    Workflow(&'a CustomType),
+}
+
+impl<'a> StructInfo<'a> {
+    pub fn fields(&self) -> Vec<(&'a str, TypeRef)> {
+        match self {
+            StructInfo::Module(td) => td
+                .fields
+                .iter()
+                .map(|f| (f.name.as_str(), f.ty.clone()))
+                .collect(),
+            StructInfo::Workflow(ct) => ct
+                .fields
+                .iter()
+                .map(|f| (f.name.as_str(), f.ty.clone()))
+                .collect(),
+        }
+    }
+}
+
+pub fn lookup_enum_variants<'a>(
+    workflow: &'a Workflow,
+    reg: &'a Registry,
+    name: &str,
+) -> Option<Vec<String>> {
+    if let Some((_m, td)) = reg.type_decl(name) {
+        if td.kind == CustomTypeKind::Enum {
+            return Some(td.variants.clone());
+        }
+    }
+    if let Some(ct) = workflow.custom_types.iter().find(|t| t.name == name) {
+        if ct.kind == CustomTypeKind::Enum {
+            return Some(ct.variants.clone());
+        }
+    }
+    None
+}
+
+pub fn is_enum_type(workflow: &Workflow, reg: &Registry, name: &str) -> bool {
+    lookup_enum_variants(workflow, reg, name).is_some()
+}
+
+fn validate_tweaks(
+    node: &NodeInstance,
+    tweaks: &[TweakDef],
+    workflow: &Workflow,
+    reg: &Registry,
+) -> Result<()> {
+    for t in tweaks {
+        let supplied = node.tweak_values.get(&t.name).or(t.default.as_ref());
+        let v = supplied.ok_or_else(|| {
+            anyhow!(
+                "node {}: tweak '{}' has no value and no default",
+                node.id,
+                t.name
+            )
+        })?;
+        validate_literal_for_type(v, &t.ty, workflow, reg).map_err(|e| {
+            anyhow!(
+                "node {}: tweak '{}': {}",
+                node.id,
+                t.name,
+                e
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn validate_literal_for_type(
+    v: &serde_json::Value,
+    ty: &TypeRef,
+    workflow: &Workflow,
+    reg: &Registry,
+) -> Result<()> {
+    use serde_json::Value;
+    match (v, ty) {
+        (Value::Null, _) => Ok(()),
+        (Value::Bool(_), TypeRef::Bool) => Ok(()),
+        (Value::Number(_), TypeRef::Int | TypeRef::Float) => Ok(()),
+        (Value::String(_), TypeRef::String) => Ok(()),
+        (Value::String(s), TypeRef::Custom { name }) => {
+            if let Some(variants) = lookup_enum_variants(workflow, reg, name) {
+                if variants.iter().any(|v| v == s) {
+                    Ok(())
+                } else {
+                    bail!("'{}' is not a variant of enum {}", s, name)
+                }
+            } else {
+                bail!("expected custom {} but got string", name)
+            }
+        }
+        (_, TypeRef::Any) => Ok(()),
+        (Value::Array(arr), TypeRef::Array { of }) => {
+            for x in arr {
+                validate_literal_for_type(x, of, workflow, reg)?;
+            }
+            Ok(())
+        }
+        (Value::Object(obj), TypeRef::Dict { value }) => {
+            for (_, x) in obj {
+                validate_literal_for_type(x, value, workflow, reg)?;
+            }
+            Ok(())
+        }
+        _ => bail!("literal shape does not match expected type"),
+    }
+}
+
+fn validate_node_against_module(
+    node: &NodeInstance,
+    workflow: &Workflow,
+    reg: &Registry,
+) -> Result<()> {
     match node.kind {
         NodeKind::Module => {
             let module = reg.require(&node.module_id)?;
-            module.component(&node.component).ok_or_else(|| {
+            let comp = module.component(&node.component).ok_or_else(|| {
                 anyhow!(
                     "node {}: module '{}' has no component '{}'",
                     node.id,
@@ -154,11 +296,44 @@ fn validate_node_against_module(node: &NodeInstance, reg: &Registry) -> Result<(
                     node.component
                 )
             })?;
+            validate_tweaks(node, &comp.tweaks, workflow, reg)?;
         }
         NodeKind::Constant => {
-            if node.constant_type.is_none() {
-                bail!("constant node {} is missing constant_type", node.id);
+            let ty = node
+                .constant_type
+                .as_ref()
+                .ok_or_else(|| anyhow!("constant node {} is missing constant_type", node.id))?;
+            if let (TypeRef::Custom { name }, Some(v)) =
+                (ty, node.constant_value.as_ref())
+            {
+                if let Some(variants) = lookup_enum_variants(workflow, reg, name) {
+                    let s = v
+                        .as_str()
+                        .ok_or_else(|| anyhow!("enum constant {} expects string variant", node.id))?;
+                    if !variants.iter().any(|vn| vn == s) {
+                        bail!(
+                            "constant node {}: '{}' is not a variant of enum '{}'",
+                            node.id,
+                            s,
+                            name
+                        );
+                    }
+                }
             }
+        }
+        NodeKind::Construct | NodeKind::Destruct => {
+            let name = node.target_type.as_ref().ok_or_else(|| {
+                anyhow!(
+                    "{} node {} is missing target_type",
+                    match node.kind {
+                        NodeKind::Construct => "construct",
+                        _ => "destruct",
+                    },
+                    node.id
+                )
+            })?;
+            let _ = resolve_struct_type(workflow, reg, name)
+                .map_err(|e| anyhow!("node {}: {}", node.id, e))?;
         }
         NodeKind::Branch | NodeKind::Loop => {}
     }
@@ -188,9 +363,62 @@ pub fn resolve_port_type(
     node: &NodeInstance,
     port: &str,
     is_output: bool,
+    workflow: &Workflow,
     reg: &Registry,
 ) -> Result<TypeRef> {
     match node.kind {
+        NodeKind::Construct => {
+            let name = node
+                .target_type
+                .as_ref()
+                .ok_or_else(|| anyhow!("construct node {} missing target_type", node.id))?;
+            let info = resolve_struct_type(workflow, reg, name)?;
+            if is_output {
+                if port == DATA_CONSTRUCT_OUT {
+                    Ok(TypeRef::Custom { name: name.clone() })
+                } else {
+                    bail!("construct node {} has no output port '{}'", node.id, port)
+                }
+            } else {
+                info.fields()
+                    .into_iter()
+                    .find(|(n, _)| *n == port)
+                    .map(|(_, ty)| ty)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "construct node {} ({}) has no input port '{}'",
+                            node.id,
+                            name,
+                            port
+                        )
+                    })
+            }
+        }
+        NodeKind::Destruct => {
+            let name = node
+                .target_type
+                .as_ref()
+                .ok_or_else(|| anyhow!("destruct node {} missing target_type", node.id))?;
+            let info = resolve_struct_type(workflow, reg, name)?;
+            if is_output {
+                info.fields()
+                    .into_iter()
+                    .find(|(n, _)| *n == port)
+                    .map(|(_, ty)| ty)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "destruct node {} ({}) has no output port '{}'",
+                            node.id,
+                            name,
+                            port
+                        )
+                    })
+            } else if port == DATA_DESTRUCT_IN {
+                Ok(TypeRef::Custom { name: name.clone() })
+            } else {
+                bail!("destruct node {} has no input port '{}'", node.id, port)
+            }
+        }
         NodeKind::Constant => {
             if !is_output {
                 bail!("constant node {} has no input ports", node.id);

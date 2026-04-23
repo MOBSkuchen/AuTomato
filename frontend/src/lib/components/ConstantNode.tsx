@@ -2,6 +2,7 @@ import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { typeColor, typeLabel, type NodeInstance, type WorkflowType } from "../types";
 import { useWorkflow } from "../store";
+import { findCustomType } from "../registry";
 
 type NodeData = { instance: NodeInstance };
 
@@ -12,6 +13,14 @@ function ConstantNode({ data, id, selected }: NodeProps) {
   const label = typeLabel(type);
   const setConstantValue = useWorkflow((s) => s.setConstantValue);
   const removeNode = useWorkflow((s) => s.removeNode);
+  const workflowTypes = useWorkflow((s) => s.workflow.customTypes);
+
+  const enumDef =
+    type.kind === "custom"
+      ? (findCustomType(type.name) ??
+          workflowTypes.find((t) => t.name === type.name))
+      : undefined;
+  const isEnum = enumDef?.kind === "enum";
 
   function handleTextOrNumber(e: React.ChangeEvent<HTMLInputElement>) {
     if (type.kind === "int") {
@@ -53,7 +62,25 @@ function ConstantNode({ data, id, selected }: NodeProps) {
         </button>
       </header>
       <div className="body">
-        {type.kind === "bool" ? (
+        {isEnum ? (
+          <select
+            className="nodrag"
+            value={
+              typeof instance.constantValue === "string"
+                ? instance.constantValue
+                : ""
+            }
+            onChange={(e) => setConstantValue(id, e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {(enumDef?.variants ?? []).map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        ) : type.kind === "bool" ? (
           <label className="bool">
             <input
               type="checkbox"

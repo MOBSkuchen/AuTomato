@@ -35,11 +35,56 @@ const jsonParseErrorType: CustomTypeDef = {
   sourceModule: "automato/json-parse",
 };
 
+const httpMethodEnum: CustomTypeDef = {
+  name: "HTTPMethod",
+  kind: "enum",
+  fields: [],
+  variants: ["GET", "POST", "PUT", "DELETE", "PATCH", "ANY"],
+  sourceModule: "automato/webhook",
+};
+
+const httpRequestContextType: CustomTypeDef = {
+  name: "HTTPRequestContext",
+  kind: "struct",
+  fields: [],
+  sealed: true,
+  sourceModule: "automato/webhook",
+};
+
+const gmailClientType: CustomTypeDef = {
+  name: "GmailClient",
+  kind: "struct",
+  fields: [],
+  sealed: true,
+  sourceModule: "automato/gmail",
+};
+
+const logLevelEnum: CustomTypeDef = {
+  name: "LogLevel",
+  kind: "enum",
+  fields: [],
+  variants: ["DEBUG", "INFO", "WARN", "ERROR"],
+  sourceModule: "automato/log",
+};
+
+const cronUnitEnum: CustomTypeDef = {
+  name: "CronUnit",
+  kind: "enum",
+  fields: [],
+  variants: ["ms", "s", "m", "h"],
+  sourceModule: "automato/cron",
+};
+
 export const BUILTIN_TYPES: CustomTypeDef[] = [
   httpRequestType,
   httpErrorType,
   emailType,
   jsonParseErrorType,
+  httpMethodEnum,
+  httpRequestContextType,
+  gmailClientType,
+  logLevelEnum,
+  cronUnitEnum,
 ];
 
 export const MODULES: ModuleDef[] = [
@@ -51,30 +96,92 @@ export const MODULES: ModuleDef[] = [
     author: "AuTomato",
     category: "Triggers",
     effectTags: ["reads_external_state"],
-    exportedTypes: [],
+    exportedTypes: [httpMethodEnum, httpRequestContextType],
     components: [
       {
         name: "on_request",
-        description: "Fires on every inbound HTTP request.",
+        description:
+          "Listens on the configured address/path/method; emits the request and a sealed response context.",
         category: "trigger",
         inputs: [],
         outputs: [
           { name: "request", type: { kind: "custom", name: "HTTPRequest" } },
+          { name: "ctx", type: { kind: "custom", name: "HTTPRequestContext" } },
+        ],
+        tweaks: [
+          {
+            name: "address",
+            description: "Host:port the server binds to.",
+            type: { kind: "string" },
+            default: ":8080",
+          },
+          {
+            name: "path",
+            description: "URL path to register the handler on.",
+            type: { kind: "string" },
+            default: "/",
+          },
+          {
+            name: "method",
+            description: "Accepted HTTP method (ANY matches all).",
+            type: { kind: "custom", name: "HTTPMethod" },
+            default: "ANY",
+          },
         ],
       },
+      {
+        name: "respond",
+        description:
+          "Writes an HTTP response for the given request context, then ends the workflow.",
+        category: "return",
+        inputs: [
+          {
+            name: "ctx",
+            type: { kind: "custom", name: "HTTPRequestContext" },
+            consumption: "consumed",
+          },
+          { name: "status", type: { kind: "int" } },
+          { name: "body", type: { kind: "string" }, consumption: "consumed" },
+        ],
+        outputs: [],
+        tweaks: [
+          {
+            name: "content_type",
+            description: "Content-Type header value.",
+            type: { kind: "string" },
+            default: "text/plain; charset=utf-8",
+          },
+        ],
+      },
+      {
+        name: "respond_json",
+        description:
+          "Writes a JSON response (Content-Type application/json) and ends the workflow.",
+        category: "return",
+        inputs: [
+          {
+            name: "ctx",
+            type: { kind: "custom", name: "HTTPRequestContext" },
+            consumption: "consumed",
+          },
+          { name: "status", type: { kind: "int" } },
+          { name: "body", type: { kind: "string" }, consumption: "consumed" },
+        ],
+        outputs: [],
+      },
     ],
-    docs: "Workflow entry point. Compiles to an http.HandleFunc.",
-    sourceUrl: "registry://automato/webhook@0.1.0",
+    docs: "Compiles to an http.HandleFunc server. Pair on_request with respond in the same workflow.",
+    sourceUrl: "registry://automato/webhook@0.2.0",
   },
   {
     id: "automato/cron",
     name: "Cron",
-    version: "0.1.0",
-    description: "Timer trigger that fires on a cron schedule.",
+    version: "0.2.0",
+    description: "Timer trigger that fires on a configurable interval.",
     author: "AuTomato",
     category: "Triggers",
     effectTags: [],
-    exportedTypes: [],
+    exportedTypes: [cronUnitEnum],
     components: [
       {
         name: "on_tick",
@@ -82,10 +189,24 @@ export const MODULES: ModuleDef[] = [
         category: "trigger",
         inputs: [],
         outputs: [{ name: "fired_at", type: { kind: "string" } }],
+        tweaks: [
+          {
+            name: "interval",
+            description: "Interval value (combined with unit).",
+            type: { kind: "int" },
+            default: 1,
+          },
+          {
+            name: "unit",
+            description: "Time unit for the interval.",
+            type: { kind: "custom", name: "CronUnit" },
+            default: "s",
+          },
+        ],
       },
     ],
-    docs: "Compiles to a goroutine driven by a time.Ticker.",
-    sourceUrl: "registry://automato/cron@0.1.0",
+    docs: "Compiles to a time.Sleep loop. Configure interval+unit via tweaks.",
+    sourceUrl: "registry://automato/cron@0.2.0",
   },
   {
     id: "automato/return",
@@ -130,7 +251,7 @@ export const MODULES: ModuleDef[] = [
     components: [
       {
         name: "fetch",
-        description: "Fetch a URL and return the body.",
+        description: "Perform an HTTP request and return the response body + status.",
         category: "action",
         inputs: [
           {
@@ -144,10 +265,30 @@ export const MODULES: ModuleDef[] = [
           { name: "status", type: { kind: "int" } },
         ],
         errorType: { kind: "custom", name: "HTTPError" },
+        tweaks: [
+          {
+            name: "timeout_ms",
+            description: "Per-request timeout in milliseconds.",
+            type: { kind: "int" },
+            default: 30000,
+          },
+          {
+            name: "user_agent",
+            description: "User-Agent header value.",
+            type: { kind: "string" },
+            default: "AuTomato/0.2",
+          },
+          {
+            name: "follow_redirects",
+            description: "Follow 3xx redirects automatically.",
+            type: { kind: "bool" },
+            default: true,
+          },
+        ],
       },
     ],
-    docs: "Fetch the body of an HTTP URL. Default method is GET.",
-    sourceUrl: "registry://automato/http-request@0.1.0",
+    docs: "Fetch the body of an HTTP URL. Method comes from the HTTPRequest input.",
+    sourceUrl: "registry://automato/http-request@0.2.0",
   },
   {
     id: "automato/json-parse",
@@ -183,20 +324,34 @@ export const MODULES: ModuleDef[] = [
     author: "AuTomato",
     category: "Debug",
     effectTags: ["writes_external_state"],
-    exportedTypes: [],
+    exportedTypes: [logLevelEnum],
     components: [
       {
-        name: "info",
-        description: "Log a string at info level.",
+        name: "log",
+        description: "Log a message at the configured level.",
         category: "action",
         inputs: [
           { name: "message", type: { kind: "string" }, consumption: "passthrough" },
         ],
         outputs: [],
+        tweaks: [
+          {
+            name: "level",
+            description: "Severity of the log entry.",
+            type: { kind: "custom", name: "LogLevel" },
+            default: "INFO",
+          },
+          {
+            name: "prefix",
+            description: "Prefix prepended to every message.",
+            type: { kind: "string" },
+            default: "",
+          },
+        ],
       },
     ],
     docs: "Side-effecting sink. Passes its message through for chaining.",
-    sourceUrl: "registry://automato/log@0.1.0",
+    sourceUrl: "registry://automato/log@0.2.0",
   },
   {
     id: "automato/string",
@@ -264,13 +419,38 @@ export const MODULES: ModuleDef[] = [
     author: "AuTomato",
     category: "Integrations",
     effectTags: ["writes_external_state", "retry", "expensive"],
-    exportedTypes: [emailType],
+    exportedTypes: [emailType, gmailClientType],
     components: [
       {
+        name: "connect",
+        description:
+          "Initialise a Gmail client from credentials. Emits a sealed handle used by send.",
+        category: "pure",
+        inputs: [],
+        outputs: [
+          { name: "client", type: { kind: "custom", name: "GmailClient" } },
+        ],
+        tweaks: [
+          {
+            name: "credentials_path",
+            description: "Path to the Gmail OAuth credentials JSON.",
+            type: { kind: "string" },
+            default: "./gmail.credentials.json",
+          },
+          {
+            name: "from_address",
+            description: "Default sender address.",
+            type: { kind: "string" },
+            default: "",
+          },
+        ],
+      },
+      {
         name: "send",
-        description: "Send an email.",
+        description: "Send an email through the given client.",
         category: "action",
         inputs: [
+          { name: "client", type: { kind: "custom", name: "GmailClient" } },
           {
             name: "email",
             type: { kind: "custom", name: "Email" },
@@ -281,8 +461,8 @@ export const MODULES: ModuleDef[] = [
         errorType: { kind: "string" },
       },
     ],
-    docs: "Sends an email using the configured Gmail credentials.",
-    sourceUrl: "registry://automato/gmail@0.1.0",
+    docs: "Connect once, send many. Client handle is sealed — only produced by connect.",
+    sourceUrl: "registry://automato/gmail@0.2.0",
   },
 ];
 
@@ -299,6 +479,12 @@ export function findComponent(moduleId: string, componentName: string) {
 export function allKnownCustomTypes(): CustomTypeDef[] {
   const seen = new Set<string>();
   const out: CustomTypeDef[] = [];
+  for (const t of BUILTIN_TYPES) {
+    if (!seen.has(t.name)) {
+      seen.add(t.name);
+      out.push(t);
+    }
+  }
   for (const m of MODULES) {
     for (const t of m.exportedTypes) {
       if (!seen.has(t.name)) {
@@ -308,4 +494,8 @@ export function allKnownCustomTypes(): CustomTypeDef[] {
     }
   }
   return out;
+}
+
+export function findCustomType(name: string): CustomTypeDef | undefined {
+  return allKnownCustomTypes().find((t) => t.name === name);
 }

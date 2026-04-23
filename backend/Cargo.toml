@@ -14,6 +14,8 @@ thiserror.workspace = true
 uuid.workspace = true
 compiler = { path = "../compiler", package = "automato-compiler" }
 tower-http = { version = "0.5", features = ["cors"] }
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+tempfile = "3"
 
 [[bin]]
 name = "automato-backend"

@@ -17,9 +17,29 @@ pub struct Workflow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomType {
     pub name: String,
+    #[serde(default)]
+    pub kind: CustomTypeKind,
+    #[serde(default)]
     pub fields: Vec<CustomField>,
     #[serde(default)]
+    pub variants: Vec<String>,
+    #[serde(default)]
     pub source_module: Option<String>,
+    #[serde(default)]
+    pub sealed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomTypeKind {
+    Struct,
+    Enum,
+}
+
+impl Default for CustomTypeKind {
+    fn default() -> Self {
+        CustomTypeKind::Struct
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +69,8 @@ pub enum NodeKind {
     Constant,
     Branch,
     Loop,
+    Construct,
+    Destruct,
 }
 
 impl Default for NodeKind {
@@ -100,6 +122,10 @@ pub struct NodeInstance {
     pub constant_value: Option<Value>,
     #[serde(default)]
     pub has_error: bool,
+    #[serde(default)]
+    pub target_type: Option<String>,
+    #[serde(default)]
+    pub tweak_values: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +154,8 @@ pub const EXEC_BODY: &str = "__body__";
 pub const EXEC_DONE: &str = "__done__";
 pub const DATA_ERRVAL: &str = "__errval__";
 pub const DATA_LOOP_ITEM: &str = "item";
+pub const DATA_CONSTRUCT_OUT: &str = "value";
+pub const DATA_DESTRUCT_IN: &str = "value";
 
 pub fn is_passthrough_port(port: &str) -> bool {
     port.ends_with("__pt")

@@ -10,7 +10,15 @@ export type WorkflowType =
   | { kind: "custom"; name: string }
   | { kind: "any" };
 
-export type NodeKind = "module" | "constant" | "branch" | "loop";
+export type NodeKind =
+  | "module"
+  | "constant"
+  | "branch"
+  | "loop"
+  | "construct"
+  | "destruct";
+
+export type CustomTypeKind = "struct" | "enum";
 
 export type NodeCategory = "trigger" | "action" | "pure" | "logic" | "return";
 
@@ -23,6 +31,13 @@ export interface PortDef {
   consumption?: InputConsumption;
 }
 
+export interface TweakDef {
+  name: string;
+  description?: string;
+  type: WorkflowType;
+  default?: unknown;
+}
+
 export interface ComponentDef {
   name: string;
   description: string;
@@ -30,6 +45,7 @@ export interface ComponentDef {
   inputs: PortDef[];
   outputs: PortDef[];
   errorType?: WorkflowType;
+  tweaks?: TweakDef[];
 }
 
 export type EffectTag =
@@ -61,8 +77,11 @@ export interface CustomTypeField {
 
 export interface CustomTypeDef {
   name: string;
+  kind?: CustomTypeKind;
   fields: CustomTypeField[];
+  variants?: string[];
   sourceModule?: string;
+  sealed?: boolean;
 }
 
 export interface NodeInstance {
@@ -79,6 +98,8 @@ export interface NodeInstance {
   literalInputs: Record<string, unknown>;
   parallelGroup?: string;
   retryPolicy?: { maxAttempts: number; backoffMs: number };
+  targetType?: string;
+  tweakValues?: Record<string, unknown>;
 }
 
 export type EdgeKind = "data" | "exec";
