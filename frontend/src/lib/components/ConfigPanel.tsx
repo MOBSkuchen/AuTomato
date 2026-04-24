@@ -26,6 +26,7 @@ export default function ConfigPanel() {
   const removeNode = useWorkflow((s) => s.removeNode);
   const setLiteralInput = useWorkflow((s) => s.setLiteralInput);
   const setConstantValue = useWorkflow((s) => s.setConstantValue);
+  const setConstantType = useWorkflow((s) => s.setConstantType);
   const setRetryPolicy = useWorkflow((s) => s.setRetryPolicy);
   const setTargetType = useWorkflow((s) => s.setTargetType);
   const setTweakValue = useWorkflow((s) => s.setTweakValue);
@@ -213,21 +214,59 @@ export default function ConfigPanel() {
                 {typeLabel(node.constantType)}
               </span>
             </div>
-            {enumForType(node.constantType) ? (
-              <select
-                value={
-                  typeof node.constantValue === "string"
-                    ? node.constantValue
-                    : ""
-                }
-                onChange={(e) => setConstantValue(node.id, e.target.value)}
-              >
-                {(enumForType(node.constantType)!.variants ?? []).map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
+            {node.constantType.kind === "custom" ? (
+              <>
+                <label className="field">
+                  <span>Enum type</span>
+                  <select
+                    value={node.constantType.name}
+                    onChange={(e) =>
+                      setConstantType(node.id, {
+                        kind: "custom",
+                        name: e.target.value,
+                      })
+                    }
+                  >
+                    {!enumForType(node.constantType) && (
+                      <option value="">(pick enum type)</option>
+                    )}
+                    {availableEnumTypes.map((t) => (
+                      <option key={t.name} value={t.name}>
+                        {t.name}
+                        {t.sourceModule ? ` · ${t.sourceModule}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {enumForType(node.constantType) && (
+                  <label className="field">
+                    <span>Variant</span>
+                    <select
+                      value={
+                        typeof node.constantValue === "string"
+                          ? node.constantValue
+                          : ""
+                      }
+                      onChange={(e) =>
+                        setConstantValue(node.id, e.target.value)
+                      }
+                    >
+                      {(enumForType(node.constantType)!.variants ?? []).map(
+                        (v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                )}
+                {availableEnumTypes.length === 0 && (
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    No enum types available. Define one in the Types editor.
+                  </div>
+                )}
+              </>
             ) : node.constantType.kind === "bool" ? (
               <label className="checkbox">
                 <input

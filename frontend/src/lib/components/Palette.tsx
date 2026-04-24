@@ -3,6 +3,8 @@ import { MODULES, allKnownCustomTypes } from "../registry";
 import { useWorkflow } from "../store";
 import { typeColor, typeLabel, type ModuleDef, type WorkflowType } from "../types";
 
+const ENUM_COLOR = "var(--t-custom)";
+
 function startDrag(
   ev: React.DragEvent,
   moduleId: string,
@@ -34,22 +36,10 @@ export default function Palette() {
   const [expandedDocs, setExpandedDocs] = useState<string | null>(null);
   const workflowTypes = useWorkflow((s) => s.workflow.customTypes);
 
-  const enumTypes = useMemo(() => {
-    const seen = new Set<string>();
-    const out: { name: string; sourceModule?: string }[] = [];
-    for (const t of allKnownCustomTypes()) {
-      if (t.kind === "enum" && !seen.has(t.name)) {
-        seen.add(t.name);
-        out.push({ name: t.name, sourceModule: t.sourceModule });
-      }
-    }
-    for (const t of workflowTypes) {
-      if (t.kind === "enum" && !seen.has(t.name)) {
-        seen.add(t.name);
-        out.push({ name: t.name });
-      }
-    }
-    return out;
+  const hasAnyEnum = useMemo(() => {
+    for (const t of allKnownCustomTypes()) if (t.kind === "enum") return true;
+    for (const t of workflowTypes) if (t.kind === "enum") return true;
+    return false;
   }, [workflowTypes]);
 
   const filtered = useMemo(() => {
@@ -179,34 +169,26 @@ export default function Palette() {
                 </div>
               );
             })}
-            {enumTypes.map((e) => {
-              const t: WorkflowType = { kind: "custom", name: e.name };
-              return (
-                <div
-                  key={"enum-" + e.name}
-                  className="builtin constant"
-                  draggable
-                  role="button"
-                  tabIndex={0}
-                  onDragStart={(ev) => startDrag(ev, "__constant__", e.name)}
-                  title={
-                    e.sourceModule
-                      ? `Enum from ${e.sourceModule}`
-                      : "Workflow-local enum"
-                  }
-                >
-                  <span className="bi-icon" style={{ color: typeColor(t) }}>
-                    ◆
-                  </span>
-                  <div className="bi-body">
-                    <div className="bi-name">const {e.name}</div>
-                    <div className="bi-sig" style={{ color: typeColor(t) }}>
-                      enum
-                    </div>
+            {hasAnyEnum && (
+              <div
+                className="builtin constant"
+                draggable
+                role="button"
+                tabIndex={0}
+                onDragStart={(ev) => startDrag(ev, "__constant__", "__enum__")}
+                title="Drop, then pick an enum type and variant"
+              >
+                <span className="bi-icon" style={{ color: ENUM_COLOR }}>
+                  ◆
+                </span>
+                <div className="bi-body">
+                  <div className="bi-name">const enum</div>
+                  <div className="bi-sig" style={{ color: ENUM_COLOR }}>
+                    pick type → variant
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            )}
           </div>
         </div>
 

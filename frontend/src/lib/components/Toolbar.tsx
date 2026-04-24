@@ -13,13 +13,26 @@ interface Props {
 type BuildTarget = "go-source" | "ast-json" | "workspace-zip" | "binary";
 type OptLevel = "default" | "none" | "size";
 
+interface DockerOptions {
+  enable: boolean;
+  port: number;
+  expose: boolean;
+}
+
 interface BuildOptions {
   optimize: OptLevel;
   strip: boolean;
   trimpath: boolean;
   goos: string;
   goarch: string;
+  docker: DockerOptions;
 }
+
+const DEFAULT_DOCKER: DockerOptions = {
+  enable: false,
+  port: 8080,
+  expose: true,
+};
 
 const DEFAULT_OPTS: BuildOptions = {
   optimize: "default",
@@ -27,6 +40,7 @@ const DEFAULT_OPTS: BuildOptions = {
   trimpath: false,
   goos: "",
   goarch: "",
+  docker: { ...DEFAULT_DOCKER },
 };
 
 const TARGET_LABELS: Record<BuildTarget, string> = {
@@ -116,15 +130,25 @@ export default function Toolbar({ onToggleTypes }: Props) {
         .env?.VITE_BACKEND_URL ?? "http://localhost:7878";
 
     const body: Record<string, unknown> = { ast, target };
+    const options: Record<string, unknown> = {};
     if (target === "binary") {
-      const options: Record<string, unknown> = {};
       if (opts.optimize !== "default") options.optimize = opts.optimize;
       if (opts.strip) options.strip = true;
       if (opts.trimpath) options.trimpath = true;
       if (opts.goos.trim()) options.goos = opts.goos.trim();
       if (opts.goarch.trim()) options.goarch = opts.goarch.trim();
-      body.options = options;
     }
+    if (
+      (target === "workspace-zip" || target === "binary") &&
+      opts.docker.enable
+    ) {
+      options.docker = {
+        enable: true,
+        port: opts.docker.port,
+        expose: opts.docker.expose,
+      };
+    }
+    if (Object.keys(options).length > 0) body.options = options;
 
     setMenuOpen(false);
     setBusy(true);
@@ -357,11 +381,73 @@ export default function Toolbar({ onToggleTypes }: Props) {
                 </div>
               )}
 
+              {(target === "workspace-zip" || target === "binary") && (
+                <div className="menu-section">
+                  <div className="menu-label">Docker</div>
+                  <label className="menu-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={opts.docker.enable}
+                      onChange={(e) =>
+                        setOpts({
+                          ...opts,
+                          docker: {
+                            ...opts.docker,
+                            enable: e.target.checked,
+                          },
+                        })
+                      }
+                    />
+                    <span>Include Dockerfile + compose</span>
+                  </label>
+                  {opts.docker.enable && (
+                    <>
+                      <div className="menu-row">
+                        <label className="menu-field compact">
+                          <span>Port</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={65535}
+                            value={opts.docker.port}
+                            onChange={(e) =>
+                              setOpts({
+                                ...opts,
+                                docker: {
+                                  ...opts.docker,
+                                  port: Number(e.target.value) || 8080,
+                                },
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+                      <label className="menu-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={opts.docker.expose}
+                          onChange={(e) =>
+                            setOpts({
+                              ...opts,
+                              docker: {
+                                ...opts.docker,
+                                expose: e.target.checked,
+                              },
+                            })
+                          }
+                        />
+                        <span>EXPOSE + publish port</span>
+                      </label>
+                    </>
+                  )}
+                </div>
+              )}
+
               <div className="menu-footer">
                 <button
                   className="menu-reset"
                   onClick={() => setOpts(DEFAULT_OPTS)}
-                  disabled={target !== "binary"}
+                  disabled={target === "go-source" || target === "ast-json"}
                 >
                   Reset opts
                 </button>

@@ -139,7 +139,13 @@ fn workspace_writes_files() {
             .unwrap()
             .as_nanos()
     ));
-    let ws = compile_to_workspace(&example_workflow(), &modules_dir(), &out).unwrap();
+    let ws = compile_to_workspace(
+        &example_workflow(),
+        &modules_dir(),
+        &out,
+        &workspace::DockerConfig::disabled(),
+    )
+    .unwrap();
     assert!(ws.files.contains_key(&PathBuf::from("go.work")));
     assert!(ws.files.contains_key(&PathBuf::from("workflow/main.go")));
     assert!(ws.files.contains_key(&PathBuf::from("workflow/go.mod")));
@@ -173,6 +179,7 @@ fn workspace_includes_transitive() {
     let ws = workspace::build_workspace(
         &serde_json::from_value::<ast::Workflow>(example_workflow()).unwrap(),
         &Registry::load(&modules_dir()).unwrap(),
+        &workspace::DockerConfig::disabled(),
     )
     .unwrap();
     assert!(

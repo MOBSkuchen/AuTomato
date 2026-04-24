@@ -56,6 +56,36 @@ struct BuildOptions {
     goos: Option<String>,
     #[serde(default)]
     goarch: Option<String>,
+    #[serde(default)]
+    docker: Option<DockerOptions>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+struct DockerOptions {
+    #[serde(default)]
+    enable: bool,
+    #[serde(default = "default_docker_port")]
+    port: u16,
+    #[serde(default = "default_true")]
+    expose: bool,
+}
+
+fn default_docker_port() -> u16 {
+    8080
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl DockerOptions {
+    fn to_config(&self) -> compiler::workspace::DockerConfig {
+        compiler::workspace::DockerConfig {
+            enable: self.enable,
+            port: self.port,
+            expose: self.expose,
+        }
+    }
 }
 
 #[tokio::main]
@@ -148,8 +178,14 @@ async fn do_build(req: BuildRequest) -> Result<Response> {
             ))
         }
         "workspace-zip" | "zip" | "workspace" => {
+            let docker = req
+                .options
+                .docker
+                .as_ref()
+                .map(|d| d.to_config())
+                .unwrap_or_default();
             let tmp = tempfile::tempdir().context("creating temp workspace dir")?;
-            compiler::compile_to_workspace(&req.ast, &modules, tmp.path())
+            compiler::compile_to_workspace(&req.ast, &modules, tmp.path(), &docker)
                 .context("building Go workspace")?;
             let bytes = zip_dir(tmp.path(), &wf_name).context("zipping workspace")?;
             Ok(download_response(
@@ -159,8 +195,14 @@ async fn do_build(req: BuildRequest) -> Result<Response> {
             ))
         }
         "binary" | "exe" => {
+            let docker = req
+                .options
+                .docker
+                .as_ref()
+                .map(|d| d.to_config())
+                .unwrap_or_default();
             let tmp = tempfile::tempdir().context("creating temp workspace dir")?;
-            compiler::compile_to_workspace(&req.ast, &modules, tmp.path())
+            compiler::compile_to_workspace(&req.ast, &modules, tmp.path(), &docker)
                 .context("building Go workspace")?;
             let buf: Vec<u8> = Vec::new();
             let (bytes, _) =

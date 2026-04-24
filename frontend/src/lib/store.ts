@@ -101,6 +101,7 @@ export interface WorkflowState {
   ) => void;
   setLiteralInput: (nodeId: string, port: string, value: unknown) => void;
   setConstantValue: (nodeId: string, value: string | number | boolean) => void;
+  setConstantType: (nodeId: string, type: WorkflowType) => void;
   setRetryPolicy: (
     nodeId: string,
     policy: { maxAttempts: number; backoffMs: number } | undefined,
@@ -307,6 +308,35 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
         n.id === nodeId ? { ...n, constantValue: value } : n,
       ),
     }));
+  },
+
+  setConstantType: (nodeId, type) => {
+    mutate(set, (wf) => {
+      let initial: string | number | boolean = defaultConstantValue(type);
+      if (type.kind === "custom") {
+        const t =
+          findCustomType(type.name) ??
+          wf.customTypes.find((ct) => ct.name === type.name);
+        if (t?.kind === "enum" && t.variants && t.variants.length > 0) {
+          initial = t.variants[0];
+        }
+      }
+      const componentName =
+        type.kind === "custom" ? type.name || "__enum__" : type.kind;
+      return {
+        ...wf,
+        nodes: wf.nodes.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                constantType: type,
+                constantValue: initial,
+                componentName,
+              }
+            : n,
+        ),
+      };
+    });
   },
 
   setRetryPolicy: (nodeId, policy) => {

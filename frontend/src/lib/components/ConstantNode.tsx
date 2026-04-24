@@ -1,8 +1,8 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { typeColor, typeLabel, type NodeInstance, type WorkflowType } from "../types";
 import { useWorkflow } from "../store";
-import { findCustomType } from "../registry";
+import { findCustomType, allKnownCustomTypes } from "../registry";
 
 type NodeData = { instance: NodeInstance };
 
@@ -10,17 +10,39 @@ function ConstantNode({ data, id, selected }: NodeProps) {
   const instance = (data as NodeData).instance;
   const type: WorkflowType = instance.constantType ?? { kind: "string" };
   const color = typeColor(type);
-  const label = typeLabel(type);
+  const rawLabel = typeLabel(type);
+  const label =
+    type.kind === "custom" && !type.name ? "enum" : rawLabel;
   const setConstantValue = useWorkflow((s) => s.setConstantValue);
+  const setConstantType = useWorkflow((s) => s.setConstantType);
   const removeNode = useWorkflow((s) => s.removeNode);
   const workflowTypes = useWorkflow((s) => s.workflow.customTypes);
 
   const enumDef =
-    type.kind === "custom"
+    type.kind === "custom" && type.name
       ? (findCustomType(type.name) ??
           workflowTypes.find((t) => t.name === type.name))
       : undefined;
+  const isEnumSlot = type.kind === "custom";
   const isEnum = enumDef?.kind === "enum";
+
+  const availableEnums = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { name: string; sourceModule?: string }[] = [];
+    for (const t of allKnownCustomTypes()) {
+      if (t.kind === "enum" && !seen.has(t.name)) {
+        seen.add(t.name);
+        out.push({ name: t.name, sourceModule: t.sourceModule });
+      }
+    }
+    for (const t of workflowTypes) {
+      if (t.kind === "enum" && !seen.has(t.name)) {
+        seen.add(t.name);
+        out.push({ name: t.name });
+      }
+    }
+    return out;
+  }, [workflowTypes]);
 
   function handleTextOrNumber(e: React.ChangeEvent<HTMLInputElement>) {
     if (type.kind === "int") {
@@ -62,24 +84,45 @@ function ConstantNode({ data, id, selected }: NodeProps) {
         </button>
       </header>
       <div className="body">
-        {isEnum ? (
-          <select
-            className="nodrag"
-            value={
-              typeof instance.constantValue === "string"
-                ? instance.constantValue
-                : ""
-            }
-            onChange={(e) => setConstantValue(id, e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            {(enumDef?.variants ?? []).map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
+        {isEnumSlot ? (
+          <>
+            <select
+              className="nodrag"
+              value={type.kind === "custom" ? type.name : ""}
+              onChange={(e) =>
+                setConstantType(id, { kind: "custom", name: e.target.value })
+              }
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {!isEnum && <option value="">(pick enum type)</option>}
+              {availableEnums.map((en) => (
+                <option key={en.name} value={en.name}>
+                  {en.name}
+                  {en.sourceModule ? ` · ${en.sourceModule}` : ""}
+                </option>
+              ))}
+            </select>
+            {isEnum && (
+              <select
+                className="nodrag"
+                value={
+                  typeof instance.constantValue === "string"
+                    ? instance.constantValue
+                    : ""
+                }
+                onChange={(e) => setConstantValue(id, e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                {(enumDef?.variants ?? []).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            )}
+          </>
         ) : type.kind === "bool" ? (
           <label className="bool">
             <input

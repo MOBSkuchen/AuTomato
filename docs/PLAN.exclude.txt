@@ -37,4 +37,16 @@ Concept for multiple nodes with the same input data.
   This can be imagined like a Rust function. A passthrough value is a borrow and a
   consumed value is the literal instance / value.
 
+# Big refactor
 claude --resume 326b927e-a95f-4e4e-bc25-93d49ca5e15b
+claude --resume REF-1
+
+Add support for TinyGo.
+Modules must be declared as compliant in their metadata.json file to use the TinyGo compile target.
+It should be a toggle under compile -> go workspace / go binary.
+If one or more modules used are not compliant, this toggle can not be enabled.
+
+Start by getting a feel for the project.
+Then check if this is feasible and what to look out for.
+Ask questions if you have any.
+And finally create an implementation plan in ./docs and then start with the implementation.

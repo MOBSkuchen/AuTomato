@@ -20,7 +20,7 @@ import BranchNode from "./BranchNode";
 import LoopNode from "./LoopNode";
 import StructNode from "./StructNode";
 import { useWorkflow } from "../store";
-import { findComponent, findCustomType } from "../registry";
+import { findComponent, findCustomType, allKnownCustomTypes } from "../registry";
 import { canConnect } from "../typecheck";
 import {
   isExecPort,
@@ -354,6 +354,15 @@ export default function Canvas() {
         return;
       }
       if (moduleId === "__constant__") {
+        if (componentName === "__enum__") {
+          const firstEnum =
+            allKnownCustomTypes().find((ct) => ct.kind === "enum")?.name ??
+            wf.customTypes.find((ct) => ct.kind === "enum")?.name ??
+            "";
+          const t: WorkflowType = { kind: "custom", name: firstEnum };
+          setSelected(addConstant(t, position).id);
+          return;
+        }
         const t =
           parseConstantType(componentName) ??
           (componentName

@@ -26,11 +26,12 @@ pub fn compile_to_workspace(
     ast: &serde_json::Value,
     modules_dir: &Path,
     out_dir: &Path,
+    docker: &workspace::DockerConfig,
 ) -> Result<workspace::Workspace> {
     let workflow: ast::Workflow = serde_json::from_value(ast.clone())
         .map_err(|e| anyhow!("failed to parse workflow AST: {e}"))?;
     let reg = registry::Registry::load(modules_dir)?;
-    let ws = workspace::build_workspace(&workflow, &reg)?;
+    let ws = workspace::build_workspace(&workflow, &reg, docker)?;
     workspace::write_workspace(&ws, out_dir)?;
     Ok(ws)
 }
