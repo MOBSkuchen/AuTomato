@@ -7,5 +7,7 @@
   "license": "MIT",
   "package": "httprequest",
   "code_files": ["fetch.go"],
-  "go_dependencies": []
+  "go_dependencies": [],
+  "category": "Network",
+  "effect_tags": ["reads_external_state", "retry", "expensive"]
 }

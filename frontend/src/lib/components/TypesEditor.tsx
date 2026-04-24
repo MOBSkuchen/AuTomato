@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useWorkflow } from "../store";
-import { BUILTIN_TYPES, allKnownCustomTypes } from "../registry";
+import { useRegistryStore } from "../registry";
 import { typeColor, typeLabel, type CustomTypeDef, type WorkflowType } from "../types";
 
 interface Props {
@@ -36,6 +36,7 @@ export default function TypesEditor({ onClose }: Props) {
   const workflow = useWorkflow((s) => s.workflow);
   const addCustomType = useWorkflow((s) => s.addCustomType);
   const removeCustomType = useWorkflow((s) => s.removeCustomType);
+  const moduleTypes = useRegistryStore((s) => s.customTypes);
 
   const [name, setName] = useState("");
   const [draftKind, setDraftKind] = useState<"struct" | "enum">("struct");
@@ -44,9 +45,9 @@ export default function TypesEditor({ onClose }: Props) {
 
   const knownCustom = useMemo(() => {
     const fromWorkflow = workflow.customTypes.map((t) => t.name);
-    const fromModules = allKnownCustomTypes().map((t) => t.name);
+    const fromModules = moduleTypes.map((t) => t.name);
     return Array.from(new Set([...fromWorkflow, ...fromModules]));
-  }, [workflow.customTypes]);
+  }, [workflow.customTypes, moduleTypes]);
 
   function addField() {
     setDraftFields((f) => [...f, { name: "", kind: "string" }]);
@@ -129,8 +130,11 @@ export default function TypesEditor({ onClose }: Props) {
 
         <section>
           <h3>From modules</h3>
+          {moduleTypes.length === 0 && (
+            <div className="muted">No module-exported types loaded.</div>
+          )}
           <div className="type-list">
-            {BUILTIN_TYPES.map((t) => (
+            {moduleTypes.map((t) => (
               <div className="type-card" key={t.name}>
                 <div className="type-head">
                   <span className="name" style={{ color: "var(--t-custom)" }}>

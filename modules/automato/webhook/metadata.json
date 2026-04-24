@@ -7,5 +7,7 @@
   "license": "MIT",
   "package": "webhook",
   "code_files": ["webhook.go"],
-  "go_dependencies": []
+  "go_dependencies": [],
+  "category": "Triggers",
+  "effect_tags": ["reads_external_state"]
 }

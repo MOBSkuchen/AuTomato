@@ -7,5 +7,7 @@
   "license": "MIT",
   "package": "cron",
   "code_files": ["cron.go"],
-  "go_dependencies": []
+  "go_dependencies": [],
+  "category": "Triggers",
+  "effect_tags": []
 }

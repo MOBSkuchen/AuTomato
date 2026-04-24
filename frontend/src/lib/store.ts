@@ -3,6 +3,8 @@ import type {
   CustomTypeDef,
   Edge,
   EdgeKind,
+  ModuleSnapshot,
+  ModuleSource,
   NodeInstance,
   NodeKind,
   Workflow,
@@ -15,7 +17,13 @@ import {
   isPassthroughHandle,
   passthroughSourceInput,
 } from "./types";
-import { findComponent, findCustomType } from "./registry";
+import {
+  findComponent,
+  findCustomType,
+  installFromSource,
+  setRegistryFallback,
+  useRegistryStore,
+} from "./registry";
 
 const STORAGE_KEY = "automato.workflow.v2";
 
@@ -31,6 +39,7 @@ function emptyWorkflow(): Workflow {
     customTypes: [],
     nodes: [],
     edges: [],
+    usedModules: [],
   };
 }
 
@@ -46,6 +55,11 @@ function isWorkflowShape(x: unknown): x is Workflow {
   );
 }
 
+function normalizeWorkflow(wf: Workflow): Workflow {
+  if (Array.isArray(wf.usedModules)) return wf;
+  return { ...wf, usedModules: [] };
+}
+
 function loadFromStorage(): Workflow {
   if (typeof localStorage === "undefined") return emptyWorkflow();
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -53,11 +67,85 @@ function loadFromStorage(): Workflow {
   try {
     const parsed = JSON.parse(raw);
     if (!isWorkflowShape(parsed)) return emptyWorkflow();
-    return parsed;
+    return normalizeWorkflow(parsed);
   } catch {
     return emptyWorkflow();
   }
 }
+
+const CACHE_ID_PREFIX = "cache_";
+
+function decodeBase64Url(s: string): string | null {
+  try {
+    const padded = s + "=".repeat((4 - (s.length % 4)) % 4);
+    const b64 = padded.replace(/-/g, "+").replace(/_/g, "/");
+    return atob(b64);
+  } catch {
+    return null;
+  }
+}
+
+function decodeCacheSource(id: string): ModuleSource | undefined {
+  if (!id.startsWith(CACHE_ID_PREFIX)) return undefined;
+  const decoded = decodeBase64Url(id.slice(CACHE_ID_PREFIX.length));
+  if (!decoded) return undefined;
+  const idx = decoded.indexOf("|");
+  if (idx < 0) return undefined;
+  const kind = decoded.slice(0, idx);
+  const rest = decoded.slice(idx + 1);
+  const idx2 = rest.lastIndexOf("|");
+  if (idx2 < 0) return undefined;
+  const url = rest.slice(0, idx2);
+  const version = rest.slice(idx2 + 1);
+  if (kind !== "git" && kind !== "http-tar") return undefined;
+  if (!url || !version) return undefined;
+  return { kind, url, version };
+}
+
+function snapshotModuleIfNew(wf: Workflow, moduleId: string): Workflow {
+  if (!moduleId || moduleId.startsWith("__")) return wf;
+  if (wf.usedModules.some((m) => m.id === moduleId)) return wf;
+  const live = useRegistryStore
+    .getState()
+    .modules.find((m) => m.id === moduleId);
+  if (!live) return wf;
+  const source = decodeCacheSource(moduleId);
+  const snap: ModuleSnapshot = source ? { ...live, source } : { ...live };
+  return { ...wf, usedModules: [...wf.usedModules, snap] };
+}
+
+function snapshotForCustomType(wf: Workflow, typeName: string | undefined): Workflow {
+  if (!typeName) return wf;
+  const t = findCustomType(typeName);
+  if (!t?.sourceModule) return wf;
+  return snapshotModuleIfNew(wf, t.sourceModule);
+}
+
+function rehydrateUsedModules(wf: Workflow): void {
+  const liveIds = new Set(
+    useRegistryStore.getState().modules.map((m) => m.id),
+  );
+  for (const m of wf.usedModules) {
+    if (!m.source) continue;
+    if (liveIds.has(m.id)) continue;
+    void installFromSource(m.source).catch((err) => {
+      console.warn(
+        `re-install failed for ${m.id} (${m.source?.kind}@${m.source?.url}): ${err}`,
+      );
+    });
+  }
+}
+
+export function rehydrateCurrentWorkflowModules(): void {
+  rehydrateUsedModules(useWorkflow.getState().workflow);
+}
+
+setRegistryFallback({
+  findModule: (id) =>
+    useWorkflow.getState().workflow.usedModules.find((m) => m.id === id),
+  customTypes: () =>
+    useWorkflow.getState().workflow.usedModules.flatMap((m) => m.exportedTypes),
+});
 
 function persist(wf: Workflow) {
   if (typeof localStorage === "undefined") return;
@@ -156,7 +244,10 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
       position,
       literalInputs: {},
     };
-    mutate(set, (wf) => ({ ...wf, nodes: [...wf.nodes, node] }));
+    mutate(set, (wf) => {
+      const withNode = { ...wf, nodes: [...wf.nodes, node] };
+      return snapshotModuleIfNew(withNode, moduleId);
+    });
     return node;
   },
 
@@ -179,7 +270,13 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
       position,
       literalInputs: {},
     };
-    mutate(set, (wf) => ({ ...wf, nodes: [...wf.nodes, node] }));
+    mutate(set, (wf) => {
+      const withNode = { ...wf, nodes: [...wf.nodes, node] };
+      if (type.kind === "custom") {
+        return snapshotForCustomType(withNode, type.name);
+      }
+      return withNode;
+    });
     return node;
   },
 
@@ -220,7 +317,10 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
       position,
       literalInputs: {},
     };
-    mutate(set, (wf) => ({ ...wf, nodes: [...wf.nodes, node] }));
+    mutate(set, (wf) => {
+      const withNode = { ...wf, nodes: [...wf.nodes, node] };
+      return snapshotForCustomType(withNode, typeName);
+    });
     return node;
   },
 
@@ -234,17 +334,25 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
       position,
       literalInputs: {},
     };
-    mutate(set, (wf) => ({ ...wf, nodes: [...wf.nodes, node] }));
+    mutate(set, (wf) => {
+      const withNode = { ...wf, nodes: [...wf.nodes, node] };
+      return snapshotForCustomType(withNode, typeName);
+    });
     return node;
   },
 
   setTargetType: (nodeId, typeName) => {
-    mutate(set, (wf) => ({
-      ...wf,
-      nodes: wf.nodes.map((n) =>
-        n.id === nodeId ? { ...n, targetType: typeName, componentName: typeName } : n,
-      ),
-    }));
+    mutate(set, (wf) => {
+      const next = {
+        ...wf,
+        nodes: wf.nodes.map((n) =>
+          n.id === nodeId
+            ? { ...n, targetType: typeName, componentName: typeName }
+            : n,
+        ),
+      };
+      return snapshotForCustomType(next, typeName);
+    });
   },
 
   setTweakValue: (nodeId, name, value) => {
@@ -323,7 +431,7 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
       }
       const componentName =
         type.kind === "custom" ? type.name || "__enum__" : type.kind;
-      return {
+      const next = {
         ...wf,
         nodes: wf.nodes.map((n) =>
           n.id === nodeId
@@ -336,6 +444,10 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
             : n,
         ),
       };
+      if (type.kind === "custom") {
+        return snapshotForCustomType(next, type.name);
+      }
+      return next;
     });
   },
 
@@ -434,8 +546,10 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
     if (!isWorkflowShape(wf)) {
       return { ok: false, error: "File is not a valid workflow." };
     }
-    persist(wf);
-    set({ workflow: wf, selectedNodeId: null });
+    const normalized = normalizeWorkflow(wf);
+    persist(normalized);
+    set({ workflow: normalized, selectedNodeId: null });
+    rehydrateUsedModules(normalized);
     return { ok: true };
   },
 }));

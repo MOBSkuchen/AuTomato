@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { MODULES, allKnownCustomTypes } from "../registry";
+import { useRegistryStore } from "../registry";
 import { useWorkflow } from "../store";
 import { typeColor, typeLabel, type ModuleDef, type WorkflowType } from "../types";
+import InstallModal from "./InstallModal";
 
 const ENUM_COLOR = "var(--t-custom)";
 
@@ -34,18 +35,21 @@ function categorySortKey(name: string): string {
 export default function Palette() {
   const [search, setSearch] = useState("");
   const [expandedDocs, setExpandedDocs] = useState<string | null>(null);
+  const [installOpen, setInstallOpen] = useState(false);
   const workflowTypes = useWorkflow((s) => s.workflow.customTypes);
+  const modules = useRegistryStore((s) => s.modules);
+  const moduleTypes = useRegistryStore((s) => s.customTypes);
 
   const hasAnyEnum = useMemo(() => {
-    for (const t of allKnownCustomTypes()) if (t.kind === "enum") return true;
+    for (const t of moduleTypes) if (t.kind === "enum") return true;
     for (const t of workflowTypes) if (t.kind === "enum") return true;
     return false;
-  }, [workflowTypes]);
+  }, [workflowTypes, moduleTypes]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return MODULES;
-    return MODULES.filter((m) => {
+    if (!q) return modules;
+    return modules.filter((m) => {
       const hay = [
         m.name,
         m.id,
@@ -59,7 +63,7 @@ export default function Palette() {
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [search]);
+  }, [search, modules]);
 
   const grouped = useMemo(() => {
     const out = new Map<string, ModuleDef[]>();
@@ -75,6 +79,16 @@ export default function Palette() {
 
   return (
     <aside className="palette">
+      <div className="palette-actions">
+        <button
+          type="button"
+          className="install-btn"
+          onClick={() => setInstallOpen(true)}
+          title="Fetch a module from a remote source into the cache"
+        >
+          + Install module
+        </button>
+      </div>
       <div className="search">
         <input
           type="search"
@@ -300,6 +314,7 @@ export default function Palette() {
       <footer>
         <div className="hint">Drag a component onto the canvas</div>
       </footer>
+      {installOpen && <InstallModal onClose={() => setInstallOpen(false)} />}
     </aside>
   );
 }

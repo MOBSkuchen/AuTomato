@@ -7,5 +7,7 @@
   "license": "MIT",
   "package": "ret",
   "code_files": ["return.go"],
-  "go_dependencies": []
+  "go_dependencies": [],
+  "category": "Returns",
+  "effect_tags": []
 }

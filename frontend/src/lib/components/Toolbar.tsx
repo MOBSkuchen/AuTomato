@@ -21,7 +21,7 @@ interface DockerOptions {
 
 interface BuildOptions {
   optimize: OptLevel;
-  strip: boolean;
+  debug: boolean;
   trimpath: boolean;
   goos: string;
   goarch: string;
@@ -36,7 +36,7 @@ const DEFAULT_DOCKER: DockerOptions = {
 
 const DEFAULT_OPTS: BuildOptions = {
   optimize: "default",
-  strip: false,
+  debug: false,
   trimpath: false,
   goos: "",
   goarch: "",
@@ -133,7 +133,7 @@ export default function Toolbar({ onToggleTypes }: Props) {
     const options: Record<string, unknown> = {};
     if (target === "binary") {
       if (opts.optimize !== "default") options.optimize = opts.optimize;
-      if (opts.strip) options.strip = true;
+      if (!opts.debug) options.strip = true;
       if (opts.trimpath) options.trimpath = true;
       if (opts.goos.trim()) options.goos = opts.goos.trim();
       if (opts.goarch.trim()) options.goarch = opts.goarch.trim();
@@ -337,12 +337,12 @@ export default function Toolbar({ onToggleTypes }: Props) {
                   <label className="menu-checkbox">
                     <input
                       type="checkbox"
-                      checked={opts.strip}
+                      checked={opts.debug}
                       onChange={(e) =>
-                        setOpts({ ...opts, strip: e.target.checked })
+                        setOpts({ ...opts, debug: e.target.checked })
                       }
                     />
-                    <span>Strip symbols (-s -w)</span>
+                    <span>Debug build (disables -ldflags -s -w)</span>
                   </label>
                   <label className="menu-checkbox">
                     <input

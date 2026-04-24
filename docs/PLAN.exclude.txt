@@ -50,3 +50,5 @@ Start by getting a feel for the project.
 Then check if this is feasible and what to look out for.
 Ask questions if you have any.
 And finally create an implementation plan in ./docs and then start with the implementation.
+
+claude --resume d422543a-7d56-4d6e-96b8-e25fc2a359c5

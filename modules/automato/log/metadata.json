@@ -7,5 +7,7 @@
   "license": "MIT",
   "package": "logmod",
   "code_files": ["log.go"],
-  "go_dependencies": []
+  "go_dependencies": [],
+  "category": "Debug",
+  "effect_tags": ["writes_external_state"]
 }

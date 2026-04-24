@@ -7,5 +7,7 @@
   "license": "MIT",
   "package": "gmail",
   "code_files": ["send.go"],
-  "go_dependencies": []
+  "go_dependencies": [],
+  "category": "Integrations",
+  "effect_tags": ["writes_external_state", "retry", "expensive"]
 }

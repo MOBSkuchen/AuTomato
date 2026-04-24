@@ -7,5 +7,7 @@
   "license": "MIT",
   "package": "httprequestbuild",
   "code_files": ["build.go"],
-  "go_dependencies": []
+  "go_dependencies": [],
+  "category": "Network",
+  "effect_tags": ["pure"]
 }

@@ -1,25 +1,45 @@
+mod cache;
+mod install;
+mod registry_state;
+mod views;
+
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
     body::Body,
-    extract::Path,
+    extract::{Path, State},
     http::{header, StatusCode},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     routing::{get, post},
     Json, Router,
 };
+use cache::CacheTracker;
+use futures::stream::StreamExt;
+use install::{InstallSource, install as do_install, uninstall};
+use registry_state::{spawn_watcher, RegistryState};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::convert::Infallible;
 use std::fs;
-use std::io::{Write as IoWrite};
+use std::io::Write as IoWrite;
 use std::net::SocketAddr;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::Command;
-use zip::write::{ExtendedFileOptions, FileOptions, FullFileOptions};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio_stream::wrappers::BroadcastStream;
+use views::{view_module, ModuleView};
+use zip::write::FullFileOptions;
 
-#[derive(Serialize)]
-struct ModuleListing {
-    id: String,
-    name: String,
-    version: String,
+const CACHE_TTL_SECONDS: u64 = 24 * 3600;
+const CACHE_GC_INTERVAL_SECONDS: u64 = 15 * 60;
+
+#[derive(Clone)]
+struct AppState {
+    registry: Arc<RegistryState>,
+    cache: Arc<CacheTracker>,
 }
 
 #[derive(Deserialize)]
@@ -90,12 +110,42 @@ impl DockerOptions {
 
 #[tokio::main]
 async fn main() {
+    let modules_dir = modules_dir();
+    fs::create_dir_all(&modules_dir).ok();
+    fs::create_dir_all(cache::cache_dir(&modules_dir)).ok();
+
+    // Index lives outside modules_dir so writes don't trip the file watcher.
+    let cache_index = cache_index_path(&modules_dir);
+    if let Some(parent) = cache_index.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    let cache_tracker = Arc::new(CacheTracker::load(cache_index));
+
+    let registry = RegistryState::new(modules_dir.clone());
+    let _watcher = match spawn_watcher(registry.clone()) {
+        Ok(w) => Some(w),
+        Err(e) => {
+            eprintln!("warning: filesystem watcher failed to start: {e:#}");
+            None
+        }
+    };
+
+    let state = AppState {
+        registry: registry.clone(),
+        cache: cache_tracker.clone(),
+    };
+
+    spawn_gc_task(state.clone());
+
     let app = Router::new().without_v07_checks()
         .route("/health", get(health))
         .route("/modules", get(list_modules))
-        .route("/modules/:id", get(get_module))
+        .route("/modules/events", get(modules_events))
+        .route("/modules/install", post(install_module))
+        .route("/modules/{*id}", get(get_module).delete(delete_module))
         .route("/compile", post(compile))
         .route("/build", post(build))
+        .with_state(state)
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin(tower_http::cors::Any)
@@ -113,17 +163,168 @@ async fn health() -> &'static str {
     "ok"
 }
 
-async fn list_modules() -> Json<Vec<ModuleListing>> {
-    Json(vec![])
+async fn list_modules(State(state): State<AppState>) -> Json<Vec<ModuleView>> {
+    let r = state.registry.current();
+    let mut views: Vec<ModuleView> = r.modules().map(view_module).collect();
+    views.sort_by(|a, b| a.id.cmp(&b.id));
+    state
+        .cache
+        .touch_many(views.iter().map(|v| v.id.as_str()));
+    Json(views)
 }
 
-async fn get_module(Path(id): Path<String>) -> impl IntoResponse {
-    (StatusCode::NOT_FOUND, format!("module {id} not found"))
+async fn get_module(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    let r = state.registry.current();
+    match r.module(&id) {
+        Some(m) => {
+            state.cache.touch(&id);
+            Json(view_module(m)).into_response()
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            format!("module '{id}' not found"),
+        )
+            .into_response(),
+    }
 }
 
-async fn compile(Json(req): Json<CompileRequest>) -> Json<CompileResponse> {
+async fn modules_events(
+    State(state): State<AppState>,
+) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.registry.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|res| async move {
+        match res {
+            Ok(_) => Some(Ok(Event::default().event("changed").data("{}"))),
+            Err(_) => None,
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+#[derive(Serialize)]
+struct InstallResponse {
+    id: String,
+    already_present: bool,
+    module: ModuleView,
+}
+
+async fn install_module(
+    State(state): State<AppState>,
+    Json(source): Json<InstallSource>,
+) -> Response {
+    let modules_dir = state.registry.modules_dir().to_path_buf();
+
+    let job = tokio::task::spawn_blocking(move || do_install(&modules_dir, &source));
+    let outcome = match job.await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                format!("{e:#}"),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                format!("install task panicked: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    state.cache.touch(&outcome.id);
+
+    if !outcome.already_present {
+        if let Err(e) = state.registry.reload() {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                format!(
+                    "module written to disk but registry reload failed: {e:#}"
+                ),
+            )
+                .into_response();
+        }
+    }
+
+    let r = state.registry.current();
+    match r.module(&outcome.id) {
+        Some(m) => Json(InstallResponse {
+            id: outcome.id.clone(),
+            already_present: outcome.already_present,
+            module: view_module(m),
+        })
+        .into_response(),
+        None => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            format!(
+                "module '{}' was installed to disk but the registry didn't pick it up",
+                outcome.id
+            ),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_module(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !cache::is_cache_id(&id) {
+        return (
+            StatusCode::FORBIDDEN,
+            format!("'{id}' is bundled and cannot be deleted via the API"),
+        )
+            .into_response();
+    }
+    let modules_dir = state.registry.modules_dir().to_path_buf();
+    let id_for_task = id.clone();
+    let job = tokio::task::spawn_blocking(move || uninstall(&modules_dir, &id_for_task));
+    match job.await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let body = format!("{e:#}");
+            let lower = body.to_lowercase();
+            let status = if lower.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::UNPROCESSABLE_ENTITY
+            };
+            return (status, body).into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("delete task panicked: {e}"),
+            )
+                .into_response();
+        }
+    }
+    state.cache.forget(&id);
+    if let Err(e) = state.registry.reload() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("registry reload failed after delete: {e:#}"),
+        )
+            .into_response();
+    }
+    (StatusCode::OK, format!("deleted '{id}'")).into_response()
+}
+
+async fn compile(
+    State(state): State<AppState>,
+    Json(req): Json<CompileRequest>,
+) -> Json<CompileResponse> {
+    touch_ast_modules(&state, &req.ast);
     let target = req.target.clone();
-    let modules_dir = modules_dir();
+    let modules_dir = state.registry.modules_dir().to_path_buf();
     let result = compiler::compile_ast(&req.ast, &req.target, &modules_dir);
     match result {
         Ok(content) => Json(CompileResponse {
@@ -141,16 +342,31 @@ async fn compile(Json(req): Json<CompileRequest>) -> Json<CompileResponse> {
     }
 }
 
-async fn build(Json(req): Json<BuildRequest>) -> Response {
-    do_build(req).await.unwrap_or_else(|e| (
+async fn build(State(state): State<AppState>, Json(req): Json<BuildRequest>) -> Response {
+    touch_ast_modules(&state, &req.ast);
+    do_build(&state, req).await.unwrap_or_else(|e| (
         StatusCode::INTERNAL_SERVER_ERROR,
         [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
         format!("{:#}", e),
     ).into_response())
 }
 
-async fn do_build(req: BuildRequest) -> Result<Response> {
-    let modules = modules_dir();
+fn touch_ast_modules(state: &AppState, ast: &serde_json::Value) {
+    let mut ids: HashSet<&str> = HashSet::new();
+    if let Some(nodes) = ast.get("nodes").and_then(|v| v.as_array()) {
+        for n in nodes {
+            if let Some(mid) = n.get("module_id").and_then(|v| v.as_str()) {
+                ids.insert(mid);
+            }
+        }
+    }
+    if !ids.is_empty() {
+        state.cache.touch_many(ids.into_iter());
+    }
+}
+
+async fn do_build(state: &AppState, req: BuildRequest) -> Result<Response> {
+    let modules = state.registry.modules_dir().to_path_buf();
     let wf_name = req
         .ast
         .get("name")
@@ -231,6 +447,16 @@ fn modules_dir() -> PathBuf {
     std::env::var("AUTOMATO_MODULES_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("modules"))
+}
+
+fn cache_index_path(modules_dir: &StdPath) -> PathBuf {
+    if let Ok(p) = std::env::var("AUTOMATO_CACHE_INDEX") {
+        return PathBuf::from(p);
+    }
+    match modules_dir.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.join(".automato").join("cache.json"),
+        _ => PathBuf::from(".automato").join("cache.json"),
+    }
 }
 
 fn slug(s: &str) -> String {
@@ -384,4 +610,69 @@ fn build_binary(root: &StdPath, opts: &BuildOptions) -> Result<(Vec<u8>, String)
     let bytes = fs::read(&out_path)
         .with_context(|| format!("reading produced binary {}", out_path.display()))?;
     Ok((bytes, bin_name.to_string()))
+}
+
+fn spawn_gc_task(state: AppState) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(CACHE_GC_INTERVAL_SECONDS));
+        // Skip the immediate first tick.
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            if let Err(e) = run_gc_pass(&state) {
+                eprintln!("cache GC pass failed: {e:#}");
+            }
+        }
+    });
+}
+
+fn run_gc_pass(state: &AppState) -> Result<()> {
+    let cache_root = cache::cache_dir(state.registry.modules_dir());
+    if !cache_root.exists() {
+        return Ok(());
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let snapshot = state.cache.snapshot();
+    let mut evicted = 0usize;
+    for entry in fs::read_dir(&cache_root)
+        .with_context(|| format!("reading {}", cache_root.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let id = match entry.file_name().to_str() {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        if !cache::is_cache_id(&id) {
+            continue;
+        }
+        let last = match snapshot.get(&id) {
+            Some(t) => *t,
+            None => {
+                // Seed an entry so future passes have something to compare.
+                state.cache.touch(&id);
+                continue;
+            }
+        };
+        if now.saturating_sub(last) > CACHE_TTL_SECONDS {
+            let path = entry.path();
+            if let Err(e) = fs::remove_dir_all(&path) {
+                eprintln!("GC: failed to remove {}: {e}", path.display());
+                continue;
+            }
+            state.cache.forget(&id);
+            evicted += 1;
+        }
+    }
+    if evicted > 0 {
+        if let Err(e) = state.registry.reload() {
+            eprintln!("GC: registry reload failed: {e:#}");
+        }
+    }
+    Ok(())
 }

@@ -7,5 +7,7 @@
   "license": "MIT",
   "package": "jsonparse",
   "code_files": ["parse.go"],
-  "go_dependencies": []
+  "go_dependencies": [],
+  "category": "Transform",
+  "effect_tags": ["pure"]
 }

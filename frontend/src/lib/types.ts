@@ -70,6 +70,16 @@ export interface ModuleDef {
   sourceUrl?: string;
 }
 
+export interface ModuleSource {
+  kind: "git" | "http-tar";
+  url: string;
+  version: string;
+}
+
+export interface ModuleSnapshot extends ModuleDef {
+  source?: ModuleSource;
+}
+
 export interface CustomTypeField {
   name: string;
   type: WorkflowType;
@@ -118,6 +128,7 @@ export interface Workflow {
   customTypes: CustomTypeDef[];
   nodes: NodeInstance[];
   edges: Edge[];
+  usedModules: ModuleSnapshot[];
 }
 
 export const EXEC_IN = "__in__";

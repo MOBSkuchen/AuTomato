@@ -25,6 +25,10 @@ struct RawMetadata {
     code_files: Option<Vec<String>>,
     #[serde(default)]
     go_dependencies: Vec<GoDependency>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    effect_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -168,6 +172,9 @@ pub struct ModuleManifest {
     pub workspace_subpath: String,
     pub types: Vec<TypeDecl>,
     pub components: HashMap<String, ComponentDef>,
+    pub category: Option<String>,
+    pub effect_tags: Vec<String>,
+    pub readme: Option<String>,
 }
 
 impl ModuleManifest {
@@ -176,6 +183,7 @@ impl ModuleManifest {
     }
 }
 
+#[derive(Default)]
 pub struct Registry {
     modules: HashMap<String, ModuleManifest>,
     type_owner: HashMap<String, String>,
@@ -253,7 +261,7 @@ impl Registry {
     }
 }
 
-fn load_manifest(dir: &Path, meta: &Path, defs: &Path) -> Result<ModuleManifest> {
+pub fn load_manifest(dir: &Path, meta: &Path, defs: &Path) -> Result<ModuleManifest> {
     let meta_raw: RawMetadata = serde_json::from_slice(&fs::read(meta)?)
         .with_context(|| format!("parsing {}", meta.display()))?;
     let defs_raw: RawDefinitions = serde_json::from_slice(&fs::read(defs)?)
@@ -397,6 +405,9 @@ fn load_manifest(dir: &Path, meta: &Path, defs: &Path) -> Result<ModuleManifest>
         );
     }
 
+    let readme_path = dir.join("README.md");
+    let readme = fs::read_to_string(&readme_path).ok();
+
     Ok(ModuleManifest {
         id: meta_raw.id,
         name: meta_raw.name,
@@ -413,6 +424,9 @@ fn load_manifest(dir: &Path, meta: &Path, defs: &Path) -> Result<ModuleManifest>
         workspace_subpath,
         types,
         components,
+        category: meta_raw.category,
+        effect_tags: meta_raw.effect_tags,
+        readme,
     })
 }
 
