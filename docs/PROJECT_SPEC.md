@@ -1,3 +1,5 @@
+# OUTDATED
+This document is only kept for archiving purposes. DO NOT USE IT FOR REFERENCE!!!
 # Workflow Automation Platform — Project Specification
 
 A self-hosted, developer-centered workflow automation platform. Workflows are designed visually in a browser-based editor, compiled to Go source code, and exported as standalone projects or Docker containers for local execution.
