@@ -32,6 +32,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio_stream::wrappers::BroadcastStream;
 use views::{view_module, ModuleView};
 use zip::write::FullFileOptions;
+use clap::Parser;
 
 const CACHE_TTL_SECONDS: u64 = 24 * 3600;
 const CACHE_GC_INTERVAL_SECONDS: u64 = 15 * 60;
@@ -108,14 +109,26 @@ impl DockerOptions {
     }
 }
 
+#[derive(Parser)]
+#[command(name = "automato-backend", about = "AuTomato Backend service", author = "MOBSkuchen")]
+struct Cli {
+    #[arg(short = 'm', long = "modules-dir", alias = "modules", default_value = "./modules", help = "Path to the directory where modules are stored")]
+    modules_dir: PathBuf,
+    #[arg(short = 'c', long = "cache-dir", alias = "cache", default_value = "./automation", help = "Path to the cache directory")]
+    cache_index_path: PathBuf,
+    #[arg(short = 'a', long = "host", aliases = ["bind", "addr", "address"], help = "Socket address to bind backend http server to")]
+    addr: SocketAddr
+}
+
 #[tokio::main]
 async fn main() {
-    let modules_dir = modules_dir();
+    let cli = Cli::parse();
+    let modules_dir = cli.modules_dir;
     fs::create_dir_all(&modules_dir).ok();
     fs::create_dir_all(cache::cache_dir(&modules_dir)).ok();
 
     // Index lives outside modules_dir so writes don't trip the file watcher.
-    let cache_index = cache_index_path(&modules_dir);
+    let cache_index = cli.cache_index_path.join("cache.json");
     if let Some(parent) = cache_index.parent() {
         fs::create_dir_all(parent).ok();
     }
@@ -153,9 +166,8 @@ async fn main() {
                 .allow_headers(tower_http::cors::Any),
         );
 
-    let addr: SocketAddr = "0.0.0.0:7878".parse().unwrap();
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    println!("automato-backend listening on http://{addr}");
+    let listener = tokio::net::TcpListener::bind(cli.addr).await.unwrap();
+    println!("automato-backend listening on http://{}", cli.addr);
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -440,22 +452,6 @@ async fn do_build(state: &AppState, req: BuildRequest) -> Result<Response> {
             ))
         }
         other => bail!("unknown build target: {other}"),
-    }
-}
-
-fn modules_dir() -> PathBuf {
-    std::env::var("AUTOMATO_MODULES_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("modules"))
-}
-
-fn cache_index_path(modules_dir: &StdPath) -> PathBuf {
-    if let Ok(p) = std::env::var("AUTOMATO_CACHE_INDEX") {
-        return PathBuf::from(p);
-    }
-    match modules_dir.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.join(".automato").join("cache.json"),
-        _ => PathBuf::from(".automato").join("cache.json"),
     }
 }
 
