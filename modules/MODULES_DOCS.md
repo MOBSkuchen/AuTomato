@@ -34,4 +34,3 @@ Module IDs may contain slashes (e.g. `automato/webhook`); the on-disk path mirro
 | `automato/log`                | Action     | `info(message)`; passthrough output for builder-style chaining.      |
 | `automato/string`             | Pure       | `concat`, `from_int`.                                                |
 | `automato/http-request-build` | Pure       | `build(url, method, body) -> HTTPRequest`.                           |
-| `automato/gmail`              | Action     | `send(email) -> (message_id, error)`. Defines `Email`.               |
