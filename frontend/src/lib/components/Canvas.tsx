@@ -19,6 +19,9 @@ import ConstantNode from "./ConstantNode";
 import BranchNode from "./BranchNode";
 import LoopNode from "./LoopNode";
 import StructNode from "./StructNode";
+import OriginNode from "./OriginNode";
+import ExitNode from "./ExitNode";
+import EnvConstNode from "./EnvConstNode";
 import { useWorkflow } from "../store";
 import { findComponent, findCustomType, allKnownCustomTypes } from "../registry";
 import { canConnect } from "../typecheck";
@@ -30,6 +33,7 @@ import {
   EXEC_ERR,
   DATA_ERRVAL,
   DATA_LOOP_ITEM,
+  DATA_EXIT_CODE,
   type NodeKind,
   type WorkflowType,
 } from "../types";
@@ -41,6 +45,9 @@ const nodeTypes = {
   loop: LoopNode,
   construct: StructNode,
   destruct: StructNode,
+  origin: OriginNode,
+  exit: ExitNode,
+  env_const: EnvConstNode,
 };
 
 function nodeType(kind: NodeKind | undefined): string {
@@ -62,6 +69,9 @@ export default function Canvas() {
   const addLoop = useWorkflow((s) => s.addLoop);
   const addConstruct = useWorkflow((s) => s.addConstruct);
   const addDestruct = useWorkflow((s) => s.addDestruct);
+  const addOrigin = useWorkflow((s) => s.addOrigin);
+  const addExit = useWorkflow((s) => s.addExit);
+  const addEnvConst = useWorkflow((s) => s.addEnvConst);
 
   const { screenToFlowPosition } = useReactFlow();
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -98,15 +108,47 @@ export default function Canvas() {
     [wf.nodes, selectedNodeId],
   );
 
+  const originReachable = useMemo(() => {
+    const reachable = new Set<string>();
+    const queue: string[] = [];
+    for (const n of wf.nodes) {
+      if (n.kind === "origin") {
+        reachable.add(n.id);
+        queue.push(n.id);
+      }
+    }
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      for (const e of wf.edges) {
+        if (e.kind !== "exec") continue;
+        if (e.from.nodeId === cur && !reachable.has(e.to.nodeId)) {
+          reachable.add(e.to.nodeId);
+          queue.push(e.to.nodeId);
+        }
+      }
+    }
+    return reachable;
+  }, [wf.nodes, wf.edges]);
+
   const edges = useMemo<FlowEdge[]>(
     () =>
       wf.edges.map((e) => {
         const isExec = e.kind === "exec";
         const isErr = e.from.port === EXEC_ERR || e.from.port === DATA_ERRVAL;
+        const fromOrigin = isExec && originReachable.has(e.from.nodeId);
         let stroke = "var(--fg-2)";
         let dash: string | undefined;
+        let className = "";
         if (isExec) {
-          stroke = isErr ? "var(--err)" : "var(--accent)";
+          if (isErr) {
+            stroke = "var(--err)";
+          } else if (fromOrigin) {
+            stroke = "#a78bfa";
+            className = "exec-edge exec-origin";
+          } else {
+            stroke = "var(--accent)";
+            className = "exec-edge";
+          }
           dash = undefined;
         } else if (isErr) {
           stroke = "var(--err)";
@@ -119,7 +161,7 @@ export default function Canvas() {
           target: e.to.nodeId,
           targetHandle: e.to.port,
           type: isExec ? "step" : "smoothstep",
-          className: isExec ? "exec-edge" : "",
+          className,
           style: {
             stroke,
             strokeWidth: isExec ? 2.2 : 1.5,
@@ -128,7 +170,7 @@ export default function Canvas() {
           data: { kind: e.kind },
         };
       }),
-    [wf.edges],
+    [wf.edges, originReachable],
   );
 
   const resolvePortType = useCallback(
@@ -147,6 +189,15 @@ export default function Canvas() {
         if (side === "source" && port === "value") return node.constantType;
         return undefined;
       }
+      if (kind === "env_const") {
+        if (side === "source" && port === "value") return { kind: "string" };
+        return undefined;
+      }
+      if (kind === "exit") {
+        if (side === "target" && port === DATA_EXIT_CODE) return { kind: "int" };
+        return undefined;
+      }
+      if (kind === "origin") return undefined;
       if (kind === "branch") {
         if (side === "target" && port === "condition") return { kind: "bool" };
         return undefined;
@@ -246,11 +297,26 @@ export default function Canvas() {
         return false;
       }
 
+      const srcNode = wf.nodes.find((n) => n.id === conn.source);
       const tgtNode = wf.nodes.find((n) => n.id === conn.target);
-      if (tgtNode) {
-        const comp = findComponent(tgtNode.moduleId, tgtNode.componentName);
-        const input = comp?.inputs.find((i) => i.name === tgtHandle);
-        if (input?.consumption === "consumed") {
+      const srcComp = srcNode ? findComponent(srcNode.moduleId, srcNode.componentName) : undefined;
+      const tgtComp = tgtNode ? findComponent(tgtNode.moduleId, tgtNode.componentName) : undefined;
+
+      if (tgtComp?.category === "trigger" && tgtHandle === tgtComp.dispatchInputName) {
+        if (srcComp?.category !== "dispatch") {
+          flashInvalid(`trigger dispatch input must come from a Dispatch node`);
+          return false;
+        }
+      }
+
+      if (tgtComp) {
+        const input = tgtComp.inputs.find((i) => i.name === tgtHandle);
+        const isDispatchInput =
+          tgtComp.category === "trigger" &&
+          tgtComp.dispatchInputName === tgtHandle;
+        const sourceIsDispatch = srcComp?.category === "dispatch";
+        const consumedSkipFanCheck = isDispatchInput && sourceIsDispatch;
+        if (input?.consumption === "consumed" && !consumedSkipFanCheck) {
           const srcForked = wf.edges.some(
             (e) =>
               e.kind === "data" &&
@@ -380,9 +446,23 @@ export default function Canvas() {
         setSelected(addDestruct(componentName || undefined, position).id);
         return;
       }
+      if (moduleId === "__origin__") {
+        const node = addOrigin(position);
+        if (!node) { flashInvalid("Only one Origin node is allowed per workflow"); return; }
+        setSelected(node.id);
+        return;
+      }
+      if (moduleId === "__exit__") {
+        setSelected(addExit(position).id);
+        return;
+      }
+      if (moduleId === "__env_const__") {
+        setSelected(addEnvConst(position).id);
+        return;
+      }
       const node = addModuleNode(moduleId, componentName, position);
       if (!node) {
-        flashInvalid("Only one Trigger is allowed per workflow");
+        flashInvalid("Could not add node");
         return;
       }
       setSelected(node.id);
@@ -394,6 +474,9 @@ export default function Canvas() {
       addConstant,
       addConstruct,
       addDestruct,
+      addOrigin,
+      addExit,
+      addEnvConst,
       addModuleNode,
       setSelected,
       flashInvalid,

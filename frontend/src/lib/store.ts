@@ -179,6 +179,11 @@ export interface WorkflowState {
     typeName: string | undefined,
     position: { x: number; y: number },
   ) => NodeInstance;
+  addOrigin: (position: { x: number; y: number }) => NodeInstance | null;
+  addExit: (position: { x: number; y: number }) => NodeInstance;
+  addEnvConst: (position: { x: number; y: number }) => NodeInstance;
+  setEnvKey: (nodeId: string, key: string) => void;
+  setEnvDefault: (nodeId: string, def: string) => void;
   setTargetType: (nodeId: string, typeName: string) => void;
   setTweakValue: (nodeId: string, name: string, value: unknown) => void;
   removeNode: (id: string) => void;
@@ -228,14 +233,6 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
   addModuleNode: (moduleId, componentName, position) => {
     const comp = findComponent(moduleId, componentName);
     if (!comp) return null;
-    if (comp.category === "trigger") {
-      const existing = get().workflow.nodes.find((n) => {
-        if (n.kind && n.kind !== "module") return false;
-        const c = findComponent(n.moduleId, n.componentName);
-        return c?.category === "trigger";
-      });
-      if (existing) return null;
-    }
     const node: NodeInstance = {
       id: newId("n"),
       moduleId,
@@ -339,6 +336,63 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
       return snapshotForCustomType(withNode, typeName);
     });
     return node;
+  },
+
+  addOrigin: (position) => {
+    const existing = get().workflow.nodes.find((n) => n.kind === "origin");
+    if (existing) return null;
+    const node: NodeInstance = {
+      id: newId("n"),
+      moduleId: "__origin__",
+      componentName: "origin",
+      kind: "origin",
+      position,
+      literalInputs: {},
+    };
+    mutate(set, (wf) => ({ ...wf, nodes: [...wf.nodes, node] }));
+    return node;
+  },
+
+  addExit: (position) => {
+    const node: NodeInstance = {
+      id: newId("n"),
+      moduleId: "__exit__",
+      componentName: "exit",
+      kind: "exit",
+      position,
+      literalInputs: {},
+    };
+    mutate(set, (wf) => ({ ...wf, nodes: [...wf.nodes, node] }));
+    return node;
+  },
+
+  addEnvConst: (position) => {
+    const node: NodeInstance = {
+      id: newId("n"),
+      moduleId: "__env_const__",
+      componentName: "env_const",
+      kind: "env_const",
+      position,
+      literalInputs: {},
+      envKey: "",
+      envDefault: "",
+    };
+    mutate(set, (wf) => ({ ...wf, nodes: [...wf.nodes, node] }));
+    return node;
+  },
+
+  setEnvKey: (nodeId, key) => {
+    mutate(set, (wf) => ({
+      ...wf,
+      nodes: wf.nodes.map((n) => (n.id === nodeId ? { ...n, envKey: key } : n)),
+    }));
+  },
+
+  setEnvDefault: (nodeId, def) => {
+    mutate(set, (wf) => ({
+      ...wf,
+      nodes: wf.nodes.map((n) => (n.id === nodeId ? { ...n, envDefault: def } : n)),
+    }));
   },
 
   setTargetType: (nodeId, typeName) => {
@@ -476,14 +530,18 @@ export const useWorkflow = create<WorkflowState>((set, get) => ({
     } else {
       const targetInputConsumed = isConsumedTarget(workflow, to);
       if (targetInputConsumed) {
-        const alreadyForked = workflow.edges.some(
-          (e) =>
-            e.kind === "data" &&
-            e.from.nodeId === from.nodeId &&
-            e.from.port === from.port &&
-            !(e.to.nodeId === to.nodeId && e.to.port === to.port),
-        );
-        if (alreadyForked) return null;
+        const fromNode = workflow.nodes.find((n) => n.id === from.nodeId);
+        const fromIsDispatch = fromNode ? nodeCategory(fromNode) === "dispatch" : false;
+        if (!fromIsDispatch) {
+          const alreadyForked = workflow.edges.some(
+            (e) =>
+              e.kind === "data" &&
+              e.from.nodeId === from.nodeId &&
+              e.from.port === from.port &&
+              !(e.to.nodeId === to.nodeId && e.to.port === to.port),
+          );
+          if (alreadyForked) return null;
+        }
       }
     }
     const edge: Edge = { id: newId("e"), from, to, kind };
@@ -574,22 +632,64 @@ export function nodeCategory(node: NodeInstance): string | undefined {
   if (kind === "constant") return "pure";
   if (kind === "branch" || kind === "loop") return "logic";
   if (kind === "construct" || kind === "destruct") return "pure";
+  if (kind === "origin") return "origin";
+  if (kind === "exit") return "return";
+  if (kind === "env_const") return "pure";
   const comp = findComponent(node.moduleId, node.componentName);
   return comp?.category;
 }
 
 export function computeValidation(wf: Workflow): string[] {
+  if (wf.nodes.length === 0) return [];
   const errs: string[] = [];
-  let triggers = 0;
+
+  let origins = 0;
   let returns = 0;
+  let mainTriggers = 0;
+  let subTriggers = 0;
+  const triggerNodes: NodeInstance[] = [];
+
   for (const n of wf.nodes) {
     const cat = nodeCategory(n);
-    if (cat === "trigger") triggers += 1;
+    if (cat === "origin") origins += 1;
+    else if (cat === "trigger") triggerNodes.push(n);
     else if (cat === "return") returns += 1;
   }
-  if (triggers === 0) errs.push("Missing Trigger node (need exactly 1)");
-  if (triggers > 1) errs.push(`${triggers} Trigger nodes found (need exactly 1)`);
-  if (returns === 0) errs.push("No Return nodes (need at least 1)");
+
+  for (const t of triggerNodes) {
+    const comp = findComponent(t.moduleId, t.componentName);
+    const mode = comp?.dispatchMode ?? "none";
+    const dispatchInput = comp?.dispatchInputName;
+    const wired = !!dispatchInput && wf.edges.some(
+      (e) => e.kind === "data" && e.to.nodeId === t.id && e.to.port === dispatchInput,
+    );
+    if (mode === "required" && !wired) {
+      errs.push(`Trigger "${comp?.name ?? t.componentName}" requires a Dispatch connection on input "${dispatchInput}"`);
+    }
+    if (mode === "none" && wired) {
+      errs.push(`Trigger "${comp?.name ?? t.componentName}" does not accept a Dispatch input`);
+    }
+    if (wired) subTriggers += 1; else mainTriggers += 1;
+  }
+
+  if (origins > 1) errs.push("More than one Origin node (need at most 1)");
+
+  if (origins === 1) {
+    if (mainTriggers > 0) {
+      errs.push(`Origin-rooted workflow cannot have standalone triggers (found ${mainTriggers})`);
+    }
+    if (returns === 0 && subTriggers === 0) {
+      errs.push("Origin-rooted workflow needs at least one Return or Dispatch+Trigger path");
+    }
+  } else {
+    if (mainTriggers === 0) {
+      errs.push("Missing entry point: add an Origin or a standalone Trigger node");
+    } else if (mainTriggers > 1) {
+      errs.push(`${mainTriggers} standalone Trigger nodes — only one is allowed without an Origin`);
+    }
+    if (returns === 0) errs.push("No Return nodes (need at least 1)");
+  }
+
   return errs;
 }
 

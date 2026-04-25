@@ -36,6 +36,7 @@ export default function Palette() {
   const [search, setSearch] = useState("");
   const [expandedDocs, setExpandedDocs] = useState<string | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
+  const hasOrigin = useWorkflow((s) => s.workflow.nodes.some((n) => n.kind === "origin"));
   const workflowTypes = useWorkflow((s) => s.workflow.customTypes);
   const modules = useRegistryStore((s) => s.modules);
   const moduleTypes = useRegistryStore((s) => s.customTypes);
@@ -102,6 +103,49 @@ export default function Palette() {
         <div className="group">
           <h3>Control flow</h3>
           <div className="builtins">
+            <div
+              className={"builtin logic" + (hasOrigin ? " disabled" : "")}
+              draggable={!hasOrigin}
+              role="button"
+              tabIndex={0}
+              onDragStart={(ev) => !hasOrigin && startDrag(ev, "__origin__", "origin")}
+              title={hasOrigin ? "Only one Origin allowed per workflow" : "Entry point / main function"}
+              style={hasOrigin ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+            >
+              <span className="bi-icon" style={{ color: "#a78bfa" }}>⬟</span>
+              <div className="bi-body">
+                <div className="bi-name">Origin</div>
+                <div className="bi-sig">entry · main</div>
+              </div>
+            </div>
+            <div
+              className="builtin logic"
+              draggable
+              role="button"
+              tabIndex={0}
+              onDragStart={(ev) => startDrag(ev, "__exit__", "exit")}
+              title="Terminate the program with an optional exit code"
+            >
+              <span className="bi-icon" style={{ color: "#e0a94c" }}>⏹</span>
+              <div className="bi-body">
+                <div className="bi-name">Exit</div>
+                <div className="bi-sig">terminates process</div>
+              </div>
+            </div>
+            <div
+              className="builtin logic"
+              draggable
+              role="button"
+              tabIndex={0}
+              onDragStart={(ev) => startDrag(ev, "__env_const__", "env_const")}
+              title="Read an environment variable at runtime"
+            >
+              <span className="bi-icon" style={{ color: "var(--t-string)" }}>$</span>
+              <div className="bi-body">
+                <div className="bi-name">Env var</div>
+                <div className="bi-sig">key → string</div>
+              </div>
+            </div>
             <div
               className="builtin logic"
               draggable

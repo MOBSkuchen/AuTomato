@@ -16,11 +16,14 @@ export type NodeKind =
   | "branch"
   | "loop"
   | "construct"
-  | "destruct";
+  | "destruct"
+  | "origin"
+  | "exit"
+  | "env_const";
 
 export type CustomTypeKind = "struct" | "enum";
 
-export type NodeCategory = "trigger" | "action" | "pure" | "logic" | "return";
+export type NodeCategory = "trigger" | "action" | "pure" | "logic" | "return" | "origin" | "dispatch";
 
 export type InputConsumption = "consumed" | "passthrough";
 
@@ -38,6 +41,8 @@ export interface TweakDef {
   default?: unknown;
 }
 
+export type DispatchMode = "required" | "either" | "none";
+
 export interface ComponentDef {
   name: string;
   description: string;
@@ -46,6 +51,9 @@ export interface ComponentDef {
   outputs: PortDef[];
   errorType?: WorkflowType;
   tweaks?: TweakDef[];
+  dispatchMode?: DispatchMode;
+  dispatchType?: WorkflowType;
+  dispatchInputName?: string;
 }
 
 export type EffectTag =
@@ -110,6 +118,8 @@ export interface NodeInstance {
   retryPolicy?: { maxAttempts: number; backoffMs: number };
   targetType?: string;
   tweakValues?: Record<string, unknown>;
+  envKey?: string;
+  envDefault?: string;
 }
 
 export type EdgeKind = "data" | "exec";
@@ -140,6 +150,8 @@ export const EXEC_BODY = "__body__";
 export const EXEC_DONE = "__done__";
 export const DATA_ERRVAL = "__errval__";
 export const DATA_LOOP_ITEM = "item";
+export const DISPATCH_PORT = "__dispatch__";
+export const DATA_EXIT_CODE = "code";
 
 const EXEC_PORTS = new Set<string>([
   EXEC_IN,

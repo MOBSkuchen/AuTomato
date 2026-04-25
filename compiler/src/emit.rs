@@ -21,6 +21,12 @@ pub fn emit_main(wf: &Workflow, reg: &Registry) -> Result<GoFile> {
     Ok(gen.finalize(plan))
 }
 
+struct TriggerFn {
+    name: String,
+    params: Vec<(String, String)>,
+    body: String,
+}
+
 struct Generator<'a> {
     wf: &'a Workflow,
     reg: &'a Registry,
@@ -36,9 +42,17 @@ struct Generator<'a> {
     indent: usize,
     imports: BTreeMap<String, &'a ModuleManifest>,
     uses_fmt: bool,
+    uses_os: bool,
+    trigger_fns: Vec<TriggerFn>,
+    dispatch_rooted: bool,
 }
 
-struct BuildPlan {
+enum BuildPlan {
+    Legacy(LegacyPlan),
+    DispatchRooted,
+}
+
+struct LegacyPlan {
     trigger_alias: String,
     trigger_fn: String,
     trigger_style: TriggerStyle,
@@ -84,20 +98,36 @@ impl<'a> Generator<'a> {
             indent: 1,
             imports: BTreeMap::new(),
             uses_fmt: false,
+            uses_os: false,
+            trigger_fns: Vec::new(),
+            dispatch_rooted: false,
         })
     }
 
     fn build(&mut self) -> Result<BuildPlan> {
+        let has_origin = self.wf.nodes.iter().any(|n| n.kind == NodeKind::Origin);
+        if has_origin {
+            self.build_dispatch_rooted()
+        } else {
+            self.build_legacy()
+        }
+    }
+
+    fn build_legacy(&mut self) -> Result<BuildPlan> {
         let entry_id = self
             .wf
             .entry
             .clone()
             .or_else(|| {
-                self.wf
-                    .nodes
-                    .iter()
-                    .find(|n| derived_category(n) == Some(NodeCategory::Trigger))
-                    .map(|n| n.id.clone())
+                if !self.wf.entries.is_empty() {
+                    Some(self.wf.entries[0].clone())
+                } else {
+                    self.wf
+                        .nodes
+                        .iter()
+                        .find(|n| derived_category(n, self.reg) == Some(NodeCategory::Trigger))
+                        .map(|n| n.id.clone())
+                }
             })
             .ok_or_else(|| anyhow!("workflow has no trigger node"))?;
 
@@ -125,6 +155,13 @@ impl<'a> Generator<'a> {
             let go_ty = self.go_type(&out.ty)?;
             params.push((var, go_ty));
         }
+        let trigger_fn = trigger_comp.impl_function.clone().ok_or_else(|| {
+            anyhow!(
+                "trigger component '{}/{}' has no impl function",
+                trigger_module.id,
+                trigger_comp.name
+            )
+        })?;
         let trigger_tweak_args = self.resolve_tweak_args(trigger_node, trigger_comp)?;
         self.emitted_action.insert(trigger_node.id.clone());
 
@@ -136,14 +173,36 @@ impl<'a> Generator<'a> {
             self.emit_node_chain(next)?;
         }
 
-        Ok(BuildPlan {
+        Ok(BuildPlan::Legacy(LegacyPlan {
             trigger_alias: trigger_module.alias.clone(),
-            trigger_fn: trigger_comp.impl_function.clone(),
+            trigger_fn,
             trigger_style,
             trigger_output_count: trigger_comp.outputs.len(),
             workflow_params: params,
             trigger_tweak_args,
-        })
+        }))
+    }
+
+    fn build_dispatch_rooted(&mut self) -> Result<BuildPlan> {
+        self.dispatch_rooted = true;
+        let origin = self
+            .wf
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Origin)
+            .ok_or_else(|| anyhow!("dispatch-rooted workflow has no origin node"))?;
+
+        self.emitted_action.insert(origin.id.clone());
+
+        if let Some(next) = self
+            .exec_out
+            .get(&(origin.id.as_str(), EXEC_OUT.to_string()))
+            .copied()
+        {
+            self.emit_node_chain(next)?;
+        }
+
+        Ok(BuildPlan::DispatchRooted)
     }
 
     fn lookup(&self, node: &NodeInstance) -> Result<(&'a ModuleManifest, &'a ComponentDef)> {
@@ -171,7 +230,7 @@ impl<'a> Generator<'a> {
     }
 
     fn emit_node(&mut self, node: &'a NodeInstance) -> Result<Option<&'a str>> {
-        let cat = derived_category(node);
+        let cat = derived_category(node, self.reg);
         match node.kind {
             NodeKind::Branch => {
                 self.emit_branch(node)?;
@@ -181,9 +240,27 @@ impl<'a> Generator<'a> {
                 self.emit_loop(node)?;
                 Ok(None)
             }
+            NodeKind::Exit => {
+                self.emit_exit(node)?;
+                Ok(None)
+            }
+            NodeKind::EnvConst | NodeKind::Constant => {
+                self.ensure_pure_emitted(node)?;
+                Ok(self
+                    .exec_out
+                    .get(&(node.id.as_str(), EXEC_OUT.to_string()))
+                    .copied())
+            }
             _ if cat == Some(NodeCategory::Return) => {
                 self.emit_return(node)?;
                 Ok(None)
+            }
+            _ if cat == Some(NodeCategory::Dispatch) => {
+                self.emit_dispatch(node)?;
+                Ok(self
+                    .exec_out
+                    .get(&(node.id.as_str(), EXEC_OUT.to_string()))
+                    .copied())
             }
             NodeKind::Construct | NodeKind::Destruct => {
                 self.ensure_pure_emitted(node)?;
@@ -241,11 +318,18 @@ impl<'a> Generator<'a> {
         comp: &ComponentDef,
         args: &[String],
     ) -> Result<()> {
+        let fn_name = comp.impl_function.as_deref().ok_or_else(|| {
+            anyhow!(
+                "node {}: component '{}' has no impl function",
+                node.id,
+                comp.name
+            )
+        })?;
         let nid = sanitize(&node.id);
         let call = format!(
             "{}.{}({})",
             module.alias,
-            comp.impl_function,
+            fn_name,
             args.join(", ")
         );
         let mut lhs: Vec<String> = comp
@@ -273,10 +357,13 @@ impl<'a> Generator<'a> {
         let mut args = self.resolve_tweak_args(node, comp)?;
         args.extend(self.resolve_args(node, comp)?);
         let nid = sanitize(&node.id);
+        let fn_name = comp.impl_function.as_deref().ok_or_else(|| {
+            anyhow!("node {}: return component '{}' has no impl function", node.id, comp.name)
+        })?;
         let call = format!(
             "{}.{}({})",
             module.alias,
-            comp.impl_function,
+            fn_name,
             args.join(", ")
         );
         if comp.outputs.is_empty() && comp.error_type.is_none() {
@@ -349,6 +436,172 @@ impl<'a> Generator<'a> {
             self.emit_node_chain(done)?;
         }
         Ok(())
+    }
+
+    fn emit_exit(&mut self, node: &'a NodeInstance) -> Result<()> {
+        self.uses_os = true;
+        self.emitted_action.insert(node.id.clone());
+        if let Some((src_id, src_port)) = self
+            .data_in
+            .get(&(node.id.as_str(), DATA_EXIT_CODE.to_string()))
+            .cloned()
+        {
+            let code_expr = self.resolve_source(src_id, &src_port)?;
+            self.line(&format!("os.Exit(int({}))", code_expr));
+        } else {
+            self.line("os.Exit(0)");
+        }
+        Ok(())
+    }
+
+    fn emit_dispatch(&mut self, node: &'a NodeInstance) -> Result<()> {
+        let (module, comp) = self.lookup(node)?;
+        self.register_import(module);
+
+        let ctor = comp.impl_function.as_deref().ok_or_else(|| {
+            anyhow!(
+                "dispatch component '{}/{}' has no impl function (constructor)",
+                module.id,
+                comp.name
+            )
+        })?;
+
+        let mut args = self.resolve_tweak_args(node, comp)?;
+        args.extend(self.resolve_args(node, comp)?);
+        let dispatch_var = format!("dispatch_{}", sanitize(&node.id));
+        self.line(&format!(
+            "{} := {}.{}({})",
+            dispatch_var,
+            module.alias,
+            ctor,
+            args.join(", ")
+        ));
+        self.line(&format!("_ = {}", dispatch_var));
+        self.emitted_action.insert(node.id.clone());
+
+        let dispatch_type_name = match &comp.dispatch_type {
+            Some(TypeRef::Custom { name }) => Some(name.clone()),
+            _ => None,
+        };
+        let dispatch_out_ports: Vec<String> = comp
+            .outputs
+            .iter()
+            .filter(|o| match (&o.ty, &dispatch_type_name) {
+                (TypeRef::Custom { name: a }, Some(b)) => a == b,
+                _ => false,
+            })
+            .map(|o| o.name.clone())
+            .collect();
+
+        let trigger_ids: Vec<&'a str> = self
+            .wf
+            .edges
+            .iter()
+            .filter(|e| {
+                e.from_node == node.id
+                    && e.kind == EdgeKind::Data
+                    && dispatch_out_ports.iter().any(|p| p == &e.from_port)
+            })
+            .map(|e| {
+                let id: &'a str = self
+                    .nodes
+                    .get(e.to_node.as_str())
+                    .map(|n| n.id.as_str())
+                    .unwrap_or("");
+                id
+            })
+            .filter(|id| !id.is_empty())
+            .collect();
+
+        for trigger_id in trigger_ids {
+            let trigger_node = self.nodes[trigger_id];
+            let (tmod, tcomp) = self.lookup(trigger_node)?;
+            self.register_import(tmod);
+
+            let register_method = comp
+                .register_methods
+                .get(&tcomp.name)
+                .cloned()
+                .unwrap_or_else(|| "Register".to_string());
+
+            let fn_name = format!("WorkflowEntry_{}", sanitize(trigger_id));
+            let trigger_tweak_args = self.resolve_tweak_args(trigger_node, tcomp)?;
+            let mut reg_args = trigger_tweak_args;
+            reg_args.push(fn_name.clone());
+            self.line(&format!(
+                "{}.{}({})",
+                dispatch_var,
+                register_method,
+                reg_args.join(", ")
+            ));
+
+            let tfn = self.emit_trigger_function(trigger_node, &fn_name)?;
+            self.trigger_fns.push(tfn);
+        }
+
+        let run_method = comp.run_method.as_deref().unwrap_or("Run");
+        self.line(&format!("{}.{}()", dispatch_var, run_method));
+        Ok(())
+    }
+
+    fn emit_trigger_function(&mut self, trigger_node: &'a NodeInstance, fn_name: &str) -> Result<TriggerFn> {
+        let (_, tcomp) = self.lookup(trigger_node)?;
+
+        let mut params: Vec<(String, String)> = Vec::with_capacity(tcomp.outputs.len());
+        for out in &tcomp.outputs {
+            let var = format!("var_{}_{}", sanitize(&trigger_node.id), sanitize(&out.name));
+            let go_ty = self.go_type(&out.ty)?;
+            params.push((var, go_ty));
+        }
+
+        let saved_body = std::mem::take(&mut self.body);
+        let saved_indent = self.indent;
+        let saved_emitted_action = self.emitted_action.clone();
+        let saved_emitted_pure = self.emitted_pure.clone();
+        let saved_emitted_constant = self.emitted_constant.clone();
+
+        self.body = String::new();
+        self.indent = 1;
+        self.emitted_action.insert(trigger_node.id.clone());
+
+        if let Some(next) = self
+            .exec_out
+            .get(&(trigger_node.id.as_str(), EXEC_OUT.to_string()))
+            .copied()
+        {
+            self.emit_node_chain(next)?;
+        }
+
+        let fn_body = std::mem::replace(&mut self.body, saved_body);
+        self.indent = saved_indent;
+        self.emitted_action = saved_emitted_action;
+        self.emitted_pure = saved_emitted_pure;
+        self.emitted_constant = saved_emitted_constant;
+
+        Ok(TriggerFn {
+            name: fn_name.to_string(),
+            params,
+            body: fn_body,
+        })
+    }
+
+    fn emit_env_const(&mut self, node: &'a NodeInstance) -> Result<String> {
+        self.uses_os = true;
+        let var = format!("var_{}_value", sanitize(&node.id));
+        if self.emitted_constant.insert(node.id.clone()) {
+            let key = node.env_key.as_deref().unwrap_or("");
+            let default = node.env_default.as_deref().unwrap_or("");
+            self.line(&format!("{} := os.Getenv({:?})", var, key));
+            if !default.is_empty() {
+                self.line(&format!("if {} == \"\" {{", var));
+                self.indent += 1;
+                self.line(&format!("{} = {:?}", var, default));
+                self.indent -= 1;
+                self.line("}");
+            }
+            self.line(&format!("_ = {}", var));
+        }
+        Ok(var)
     }
 
     fn resolve_tweak_args(
@@ -448,6 +701,7 @@ impl<'a> Generator<'a> {
 
         match node.kind {
             NodeKind::Constant => self.ensure_constant_emitted(node),
+            NodeKind::EnvConst => self.emit_env_const(node),
             NodeKind::Branch | NodeKind::Loop => Ok(format!(
                 "var_{}_{}",
                 sanitize(&node.id),
@@ -469,8 +723,11 @@ impl<'a> Generator<'a> {
                     sanitize(src_port)
                 ))
             }
+            NodeKind::Origin | NodeKind::Exit => {
+                bail!("node '{}' has no data outputs", node.id)
+            }
             NodeKind::Module => {
-                let cat = derived_category(node);
+                let cat = derived_category(node, self.reg);
                 if cat == Some(NodeCategory::Pure) {
                     self.ensure_pure_emitted(node)?;
                 } else if !self.emitted_action.contains(&node.id) {
@@ -483,6 +740,9 @@ impl<'a> Generator<'a> {
 
                 if src_port == DATA_ERRVAL {
                     return self.resolve_errval(node);
+                }
+                if src_port == DISPATCH_PORT {
+                    bail!("__dispatch__ port cannot be a data source for non-trigger nodes");
                 }
                 Ok(format!(
                     "var_{}_{}",
@@ -534,6 +794,14 @@ impl<'a> Generator<'a> {
         match node.kind {
             NodeKind::Construct => self.emit_construct(node),
             NodeKind::Destruct => self.emit_destruct(node),
+            NodeKind::EnvConst => {
+                self.emit_env_const(node)?;
+                Ok(())
+            }
+            NodeKind::Constant => {
+                self.ensure_constant_emitted(node)?;
+                Ok(())
+            }
             _ => {
                 let (module, comp) = self.lookup(node)?;
                 self.register_import(module);
@@ -649,6 +917,9 @@ impl<'a> Generator<'a> {
         if self.uses_fmt {
             imports_map.insert("fmt".to_string(), "fmt".to_string());
         }
+        if self.uses_os {
+            imports_map.insert("os".to_string(), "os".to_string());
+        }
         for (alias, mm) in &self.imports {
             imports_map.insert(alias.clone(), mm.import_path.clone());
         }
@@ -657,6 +928,8 @@ impl<'a> Generator<'a> {
         for (alias, path) in &imports_map {
             if alias == "fmt" {
                 out.push_str("\t\"fmt\"\n");
+            } else if alias == "os" {
+                out.push_str("\t\"os\"\n");
             } else {
                 out.push_str(&format!("\t{} \"{}\"\n", alias, path));
             }
@@ -676,67 +949,101 @@ impl<'a> Generator<'a> {
             out.push('\n');
         }
 
-        let params_str: Vec<String> = plan
-            .workflow_params
-            .iter()
-            .map(|(n, t)| format!("{} {}", n, t))
-            .collect();
-        out.push_str(&format!(
-            "func WorkflowEntry({}) {{\n",
-            params_str.join(", ")
-        ));
-        for (n, _) in &plan.workflow_params {
-            out.push_str(&format!("\t_ = {}\n", n));
+        for tfn in &self.trigger_fns {
+            let params_str: Vec<String> = tfn
+                .params
+                .iter()
+                .map(|(n, t)| format!("{} {}", n, t))
+                .collect();
+            out.push_str(&format!(
+                "func {}({}) {{\n",
+                tfn.name,
+                params_str.join(", ")
+            ));
+            for (n, _) in &tfn.params {
+                out.push_str(&format!("\t_ = {}\n", n));
+            }
+            out.push_str(&tfn.body);
+            out.push_str("}\n\n");
         }
-        out.push_str(&self.body);
-        out.push_str("}\n\n");
 
-        out.push_str("func main() {\n");
-        let arg_names: Vec<String> = (0..plan.trigger_output_count)
-            .map(|i| format!("v{}", i))
-            .collect();
-        let mut trigger_call_args = plan.trigger_tweak_args.clone();
-        match plan.trigger_style {
-            TriggerStyle::Callback => {
-                trigger_call_args.push("WorkflowEntry".to_string());
-                out.push_str(&format!(
-                    "\t{}.{}({})\n",
-                    plan.trigger_alias,
-                    plan.trigger_fn,
-                    trigger_call_args.join(", ")
-                ));
+        match plan {
+            BuildPlan::DispatchRooted => {
+                out.push_str("func OriginEntry() {\n");
+                out.push_str(&self.body);
+                out.push_str("}\n\n");
+
+                out.push_str("func main() {\n");
+                out.push_str("\tOriginEntry()\n");
+                out.push_str("}\n");
             }
-            TriggerStyle::Polling => {
-                out.push_str("\tfor {\n");
-                let call = format!(
-                    "{}.{}({})",
-                    plan.trigger_alias,
-                    plan.trigger_fn,
-                    trigger_call_args.join(", ")
-                );
-                if arg_names.is_empty() {
-                    out.push_str(&format!("\t\tok := {}\n", call));
-                } else {
-                    out.push_str(&format!(
-                        "\t\t{}, ok := {}\n",
-                        arg_names.join(", "),
-                        call
-                    ));
-                }
-                out.push_str("\t\tif !ok {\n\t\t\tcontinue\n\t\t}\n");
+            BuildPlan::Legacy(plan) => {
+                let params_str: Vec<String> = plan
+                    .workflow_params
+                    .iter()
+                    .map(|(n, t)| format!("{} {}", n, t))
+                    .collect();
                 out.push_str(&format!(
-                    "\t\tWorkflowEntry({})\n",
-                    arg_names.join(", ")
+                    "func WorkflowEntry({}) {{\n",
+                    params_str.join(", ")
                 ));
-                out.push_str("\t}\n");
+                for (n, _) in &plan.workflow_params {
+                    out.push_str(&format!("\t_ = {}\n", n));
+                }
+                out.push_str(&self.body);
+                out.push_str("}\n\n");
+
+                out.push_str("func main() {\n");
+                let arg_names: Vec<String> = (0..plan.trigger_output_count)
+                    .map(|i| format!("v{}", i))
+                    .collect();
+                let mut trigger_call_args = plan.trigger_tweak_args.clone();
+                match plan.trigger_style {
+                    TriggerStyle::Callback => {
+                        trigger_call_args.push("WorkflowEntry".to_string());
+                        out.push_str(&format!(
+                            "\t{}.{}({})\n",
+                            plan.trigger_alias,
+                            plan.trigger_fn,
+                            trigger_call_args.join(", ")
+                        ));
+                    }
+                    TriggerStyle::Polling => {
+                        out.push_str("\tfor {\n");
+                        let call = format!(
+                            "{}.{}({})",
+                            plan.trigger_alias,
+                            plan.trigger_fn,
+                            trigger_call_args.join(", ")
+                        );
+                        if arg_names.is_empty() {
+                            out.push_str(&format!("\t\tok := {}\n", call));
+                        } else {
+                            out.push_str(&format!(
+                                "\t\t{}, ok := {}\n",
+                                arg_names.join(", "),
+                                call
+                            ));
+                        }
+                        out.push_str("\t\tif !ok {\n\t\t\tcontinue\n\t\t}\n");
+                        out.push_str(&format!(
+                            "\t\tWorkflowEntry({})\n",
+                            arg_names.join(", ")
+                        ));
+                        out.push_str("\t}\n");
+                    }
+                }
+                out.push_str("}\n");
             }
         }
-        out.push_str("}\n");
 
         let mut imports = imports_map;
         imports.remove("fmt");
         if self.uses_fmt {
             imports.insert("fmt".to_string(), "fmt".to_string());
+        }
+        if self.uses_os {
+            imports.insert("os".to_string(), "os".to_string());
         }
         GoFile {
             body: out,

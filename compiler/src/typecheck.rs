@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::registry::{ComponentDef, Consumption, ModuleManifest, Registry, TweakDef, TypeDecl};
+use crate::registry::{ComponentDef, Consumption, DispatchMode, ModuleManifest, Registry, TweakDef, TypeDecl};
 use anyhow::{anyhow, bail, Result};
 use std::collections::{BTreeMap, HashMap};
 
@@ -57,34 +57,94 @@ pub fn validate(workflow: &Workflow, reg: &Registry) -> Result<()> {
         }
     }
 
-    let mut trigger_count = 0;
+    let mut origin_count = 0;
     let mut return_count = 0;
+    let mut main_trigger_count = 0;
     for n in &workflow.nodes {
-        let cat = derived_category(n);
+        let cat = derived_category(n, reg);
         match cat {
-            Some(NodeCategory::Trigger) => trigger_count += 1,
+            Some(NodeCategory::Origin) => origin_count += 1,
             Some(NodeCategory::Return) => return_count += 1,
+            Some(NodeCategory::Trigger) => {
+                let module = reg.require(&n.module_id)?;
+                let comp = module.component(&n.component).ok_or_else(|| {
+                    anyhow!("node {}: unknown component '{}'", n.id, n.component)
+                })?;
+                let dispatch_input = comp.dispatch_input_name.as_deref();
+                let is_wired = dispatch_input
+                    .map(|name| {
+                        workflow.edges.iter().any(|e| {
+                            e.to_node == n.id && e.to_port == name && e.kind == EdgeKind::Data
+                        })
+                    })
+                    .unwrap_or(false);
+                match comp.dispatch_mode.as_ref() {
+                    Some(DispatchMode::Required) if !is_wired => {
+                        bail!(
+                            "trigger node {} ({}/{}) requires a dispatch connection but has none",
+                            n.id,
+                            n.module_id,
+                            n.component
+                        );
+                    }
+                    Some(DispatchMode::None) if is_wired => {
+                        bail!(
+                            "trigger node {} ({}/{}) has dispatch_mode:none and cannot accept a dispatch connection",
+                            n.id,
+                            n.module_id,
+                            n.component
+                        );
+                    }
+                    _ => {}
+                }
+                if !is_wired {
+                    main_trigger_count += 1;
+                }
+            }
             _ => {}
         }
         validate_node_against_module(n, workflow, reg)?;
     }
-    if trigger_count != 1 {
-        bail!(
-            "workflow must have exactly one trigger node (found {})",
-            trigger_count
-        );
-    }
-    if return_count == 0 {
-        bail!("workflow must have at least one return node");
+
+    if origin_count > 1 {
+        bail!("workflow must have at most one origin node (found {})", origin_count);
     }
 
-    if let Some(entry) = &workflow.entry {
+    if origin_count == 1 {
+        if main_trigger_count > 0 {
+            bail!(
+                "origin-rooted workflow cannot contain {} standalone trigger(s); all triggers must be sub-triggers wired to a Dispatch node",
+                main_trigger_count
+            );
+        }
+    } else {
+        if main_trigger_count != 1 {
+            bail!(
+                "workflow must have exactly one entry: either an origin node or a single standalone trigger (found {} standalone triggers)",
+                main_trigger_count
+            );
+        }
+        if return_count == 0 {
+            bail!("workflow must have at least one return node");
+        }
+    }
+
+    let entry_ids: Vec<&str> = if !workflow.entries.is_empty() {
+        workflow.entries.iter().map(|s| s.as_str()).collect()
+    } else if let Some(entry) = &workflow.entry {
+        vec![entry.as_str()]
+    } else {
+        vec![]
+    };
+
+    for entry in entry_ids {
         let n = nodes
-            .get(entry.as_str())
+            .get(entry)
             .copied()
             .ok_or_else(|| anyhow!("entry '{}' references unknown node", entry))?;
-        if derived_category(n) != Some(NodeCategory::Trigger) {
-            bail!("entry '{}' is not a trigger node", entry);
+        let cat = derived_category(n, reg);
+        if cat != Some(NodeCategory::Trigger) && cat != Some(NodeCategory::Origin) {
+            bail!("entry '{}' is not a trigger or origin node", entry);
         }
     }
 
@@ -109,21 +169,24 @@ pub fn validate(workflow: &Workflow, reg: &Registry) -> Result<()> {
             );
         }
 
-        if let Some(Consumption::Consumed) = consumption_of_input(dst, &e.to_port, reg)? {
-            let fanout = data_out_targets
-                .get(&(e.from_node.as_str(), e.from_port.as_str()))
-                .copied()
-                .unwrap_or(0);
-            if fanout > 1 {
-                bail!(
-                    "edge {}: target input {}.{} is 'consumed' but its source {}.{} fans out to {} edges",
-                    e.id,
-                    dst.id,
-                    e.to_port,
-                    src.id,
-                    e.from_port,
-                    fanout
-                );
+        let from_is_dispatch = derived_category(src, reg) == Some(NodeCategory::Dispatch);
+        if !from_is_dispatch {
+            if let Some(Consumption::Consumed) = consumption_of_input(dst, &e.to_port, reg)? {
+                let fanout = data_out_targets
+                    .get(&(e.from_node.as_str(), e.from_port.as_str()))
+                    .copied()
+                    .unwrap_or(0);
+                if fanout > 1 {
+                    bail!(
+                        "edge {}: target input {}.{} is 'consumed' but its source {}.{} fans out to {} edges",
+                        e.id,
+                        dst.id,
+                        e.to_port,
+                        src.id,
+                        e.from_port,
+                        fanout
+                    );
+                }
             }
         }
     }
@@ -131,7 +194,7 @@ pub fn validate(workflow: &Workflow, reg: &Registry) -> Result<()> {
     Ok(())
 }
 
-pub fn derived_category(node: &NodeInstance) -> Option<NodeCategory> {
+pub fn derived_category(node: &NodeInstance, reg: &Registry) -> Option<NodeCategory> {
     if let Some(c) = node.category {
         return Some(c);
     }
@@ -139,7 +202,27 @@ pub fn derived_category(node: &NodeInstance) -> Option<NodeCategory> {
         NodeKind::Constant => Some(NodeCategory::Pure),
         NodeKind::Branch | NodeKind::Loop => Some(NodeCategory::Logic),
         NodeKind::Construct | NodeKind::Destruct => Some(NodeCategory::Pure),
-        NodeKind::Module => None,
+        NodeKind::Origin => Some(NodeCategory::Origin),
+        NodeKind::Exit => Some(NodeCategory::Return),
+        NodeKind::EnvConst => Some(NodeCategory::Pure),
+        NodeKind::Module => {
+            if let Ok(module) = reg.require(&node.module_id) {
+                if let Some(comp) = module.component(&node.component) {
+                    if let Some(cat) = &comp.category {
+                        return match cat.as_str() {
+                            "trigger" => Some(NodeCategory::Trigger),
+                            "action" => Some(NodeCategory::Action),
+                            "pure" => Some(NodeCategory::Pure),
+                            "logic" => Some(NodeCategory::Logic),
+                            "return" => Some(NodeCategory::Return),
+                            "dispatch" => Some(NodeCategory::Dispatch),
+                            _ => None,
+                        };
+                    }
+                }
+            }
+            None
+        }
     }
 }
 
@@ -336,6 +419,13 @@ fn validate_node_against_module(
                 .map_err(|e| anyhow!("node {}: {}", node.id, e))?;
         }
         NodeKind::Branch | NodeKind::Loop => {}
+        NodeKind::Origin => {}
+        NodeKind::Exit => {}
+        NodeKind::EnvConst => {
+            node.env_key.as_ref().ok_or_else(|| {
+                anyhow!("env_const node {} is missing env_key", node.id)
+            })?;
+        }
     }
     Ok(())
 }
@@ -345,7 +435,7 @@ fn consumption_of_input(
     port: &str,
     reg: &Registry,
 ) -> Result<Option<Consumption>> {
-    if node.kind != NodeKind::Module {
+    if !matches!(node.kind, NodeKind::Module) {
         return Ok(None);
     }
     let module = reg.require(&node.module_id)?;
@@ -454,6 +544,29 @@ pub fn resolve_port_type(
                 })
             } else {
                 bail!("loop node {} has no input port '{}'", node.id, port)
+            }
+        }
+        NodeKind::Origin => {
+            bail!("origin node {} has no data ports", node.id);
+        }
+        NodeKind::Exit => {
+            if is_output {
+                bail!("exit node {} has no output ports", node.id);
+            }
+            if port == DATA_EXIT_CODE {
+                Ok(TypeRef::Int)
+            } else {
+                bail!("exit node {} has no input port '{}'", node.id, port)
+            }
+        }
+        NodeKind::EnvConst => {
+            if !is_output {
+                bail!("env_const node {} has no input ports", node.id);
+            }
+            if port == "value" {
+                Ok(TypeRef::String)
+            } else {
+                bail!("env_const node {} has no output port '{}'", node.id, port)
             }
         }
         NodeKind::Module => {

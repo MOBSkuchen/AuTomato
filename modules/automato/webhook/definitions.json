@@ -18,6 +18,12 @@
       "kind": "struct",
       "sealed": true,
       "fields": []
+    },
+    {
+      "name": "HTTPDispatch",
+      "kind": "struct",
+      "sealed": true,
+      "fields": []
     }
   ],
   "components": [
@@ -25,7 +31,8 @@
       "name": "on_request",
       "category": "trigger",
       "trigger_style": "callback",
-      "description": "Listens for HTTP requests on the configured address/path/method. Emits the request and a sealed response context that can be used by the `respond` return.",
+      "dispatch_mode": "none",
+      "description": "Standalone HTTP trigger. Starts its own server on the configured address. Use http_dispatch + on_route if you need multiple routes.",
       "tweaks": [
         {
           "name": "address",
@@ -52,6 +59,57 @@
         { "name": "ctx", "type": { "kind": "custom", "name": "HTTPRequestContext" } }
       ],
       "impl": "OnRequest"
+    },
+    {
+      "name": "on_route",
+      "category": "trigger",
+      "trigger_style": "callback",
+      "dispatch_mode": "required",
+      "dispatch_input_name": "dispatch",
+      "description": "Handles HTTP requests matching a specific path and method. Wire its `dispatch` input to an http_dispatch node.",
+      "tweaks": [
+        {
+          "name": "path",
+          "description": "URL path pattern to register (e.g. /api/users).",
+          "type": { "kind": "string" },
+          "default": "/"
+        },
+        {
+          "name": "method",
+          "description": "Accepted HTTP method.",
+          "type": { "kind": "custom", "name": "HTTPMethod" },
+          "default": "ANY"
+        }
+      ],
+      "inputs": [
+        { "name": "dispatch", "type": { "kind": "custom", "name": "HTTPDispatch" }, "consumption": "consumed" }
+      ],
+      "outputs": [
+        { "name": "request", "type": { "kind": "custom", "name": "HTTPRequest" } },
+        { "name": "ctx", "type": { "kind": "custom", "name": "HTTPRequestContext" } }
+      ]
+    },
+    {
+      "name": "http_dispatch",
+      "category": "dispatch",
+      "description": "Creates an HTTP server and dispatches incoming requests to registered route handlers. Wire its `dispatch` output into one or more on_route triggers, then wire exec into it from your origin/trigger.",
+      "inputs": [
+        {
+          "name": "address",
+          "type": { "kind": "string" },
+          "consumption": "consumed"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "dispatch",
+          "type": { "kind": "custom", "name": "HTTPDispatch" }
+        }
+      ],
+      "impl": "NewHTTPDispatch",
+      "dispatch_type": { "kind": "custom", "name": "HTTPDispatch" },
+      "run_method": "Run",
+      "register_methods": { "on_route": "Register" }
     },
     {
       "name": "respond",

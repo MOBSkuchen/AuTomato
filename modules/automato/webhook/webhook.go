@@ -5,6 +5,37 @@ import (
 	"net/http"
 )
 
+type HTTPDispatch struct {
+	address string
+	mux     *http.ServeMux
+}
+
+func NewHTTPDispatch(address string) *HTTPDispatch {
+	return &HTTPDispatch{address: address, mux: http.NewServeMux()}
+}
+
+func (d *HTTPDispatch) Register(path string, method HTTPMethod, handler func(HTTPRequest, HTTPRequestContext)) {
+	d.mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+		if method != HTTPMethodANY && string(method) != r.Method {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		ctx := HTTPRequestContext{w: w, done: make(chan struct{}, 1)}
+		handler(HTTPRequest{Url: r.URL.String(), Method: r.Method, Body: string(body)}, ctx)
+		select {
+		case <-ctx.done:
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+}
+
+func (d *HTTPDispatch) Run() {
+	_ = http.ListenAndServe(d.address, d.mux)
+}
+
 type HTTPRequest struct {
 	Url    string
 	Method string

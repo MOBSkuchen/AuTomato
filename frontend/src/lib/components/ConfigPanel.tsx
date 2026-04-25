@@ -30,6 +30,8 @@ export default function ConfigPanel() {
   const setRetryPolicy = useWorkflow((s) => s.setRetryPolicy);
   const setTargetType = useWorkflow((s) => s.setTargetType);
   const setTweakValue = useWorkflow((s) => s.setTweakValue);
+  const setEnvKey = useWorkflow((s) => s.setEnvKey);
+  const setEnvDefault = useWorkflow((s) => s.setEnvDefault);
 
   const node = useMemo(
     () => workflow.nodes.find((n) => n.id === selectedNodeId) ?? null,
@@ -43,7 +45,10 @@ export default function ConfigPanel() {
       nodeKind === "branch" ||
       nodeKind === "loop" ||
       nodeKind === "construct" ||
-      nodeKind === "destruct");
+      nodeKind === "destruct" ||
+      nodeKind === "origin" ||
+      nodeKind === "exit" ||
+      nodeKind === "env_const");
 
   const allTypes: CustomTypeDef[] = useMemo(() => {
     const fromModules = allKnownCustomTypes();
@@ -150,7 +155,13 @@ export default function ConfigPanel() {
             ? "Loop"
             : nodeKind === "construct"
               ? "Construct"
-              : "Destruct";
+              : nodeKind === "origin"
+                ? "Origin"
+                : nodeKind === "exit"
+                  ? "Exit"
+                  : nodeKind === "env_const"
+                    ? "Env Var"
+                    : "Destruct";
     const subtitle =
       nodeKind === "constant"
         ? "Literal value with no inputs."
@@ -160,7 +171,13 @@ export default function ConfigPanel() {
             ? "Iterates over an array; body runs per item, done runs after."
             : nodeKind === "construct"
               ? "Builds a struct from its field inputs."
-              : "Splits a struct into per-field outputs.";
+              : nodeKind === "origin"
+                ? "Entry point for the workflow (equivalent to main)."
+                : nodeKind === "exit"
+                  ? "Terminates the process with an optional exit code."
+                  : nodeKind === "env_const"
+                    ? "Reads an environment variable at runtime, falls back to a default."
+                    : "Splits a struct into per-field outputs.";
     return (
       <aside className="config">
         <header>
@@ -202,6 +219,39 @@ export default function ConfigPanel() {
                 No struct types available. Open the Types editor to add one.
               </div>
             )}
+          </section>
+        )}
+
+        {nodeKind === "env_const" && (
+          <section>
+            <h3>Configuration</h3>
+            <label className="field">
+              <span>Env key</span>
+              <input
+                type="text"
+                value={node.envKey ?? ""}
+                onChange={(e) => setEnvKey(node.id, e.target.value)}
+                placeholder="MY_ENV_VAR"
+              />
+            </label>
+            <label className="field">
+              <span>Default value</span>
+              <input
+                type="text"
+                value={node.envDefault ?? ""}
+                onChange={(e) => setEnvDefault(node.id, e.target.value)}
+                placeholder="fallback"
+              />
+            </label>
+          </section>
+        )}
+
+        {nodeKind === "exit" && (
+          <section>
+            <h3>Exit code</h3>
+            <div className="muted">
+              Wire an int to the <code>code</code> input pin, or leave unwired to exit with 0.
+            </div>
           </section>
         )}
 
@@ -377,6 +427,27 @@ export default function ConfigPanel() {
               enumDef={enumForType(t.type)}
             />
           ))}
+        </section>
+      )}
+
+      {comp.category === "trigger" && comp.dispatchMode && comp.dispatchMode !== "none" && comp.dispatchInputName && (
+        <section>
+          <h3>Dispatch</h3>
+          {(() => {
+            const inputName = comp.dispatchInputName!;
+            const wired = workflow.edges.some(
+              (e) => e.kind === "data" && e.to.nodeId === node.id && e.to.port === inputName,
+            );
+            return (
+              <div className={"err-status " + (wired ? "wired" : "unwired")}>
+                {wired
+                  ? `✓ dispatch wired (input "${inputName}")`
+                  : comp.dispatchMode === "required"
+                    ? `⚠ wire a Dispatch node into input "${inputName}"`
+                    : `○ standalone trigger — wire input "${inputName}" to use a Dispatch`}
+              </div>
+            );
+          })()}
         </section>
       )}
 

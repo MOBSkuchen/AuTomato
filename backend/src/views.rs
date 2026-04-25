@@ -1,5 +1,5 @@
 use compiler::ast::TypeRef;
-use compiler::registry::{ComponentDef, Consumption, ModuleManifest, PortDef, TweakDef, TypeDecl};
+use compiler::registry::{ComponentDef, Consumption, DispatchMode, ModuleManifest, PortDef, TweakDef, TypeDecl};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -48,6 +48,12 @@ pub struct ComponentView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_type: Option<TypeRef>,
     pub tweaks: Vec<TweakViewItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_mode: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_type: Option<TypeRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_input_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -123,6 +129,17 @@ fn view_component(c: &ComponentDef) -> ComponentView {
         outputs: c.outputs.iter().map(view_port).collect(),
         error_type: c.error_type.clone(),
         tweaks: c.tweaks.iter().map(view_tweak).collect(),
+        dispatch_mode: c.dispatch_mode.as_ref().map(dispatch_mode_str),
+        dispatch_type: c.dispatch_type.clone(),
+        dispatch_input_name: c.dispatch_input_name.clone(),
+    }
+}
+
+fn dispatch_mode_str(m: &DispatchMode) -> &'static str {
+    match m {
+        DispatchMode::Required => "required",
+        DispatchMode::Either => "either",
+        DispatchMode::None => "none",
     }
 }
 

@@ -34,6 +34,10 @@ export function exportAst(workflow: Workflow): unknown {
         has_error: !!comp?.errorType,
         target_type: n.targetType ?? null,
         tweak_values: n.tweakValues ?? {},
+        env_key: n.envKey ?? null,
+        env_default: n.envDefault ?? null,
+        dispatch_mode: comp?.dispatchMode ?? null,
+        dispatch_type: comp?.dispatchType ?? null,
       };
     }),
     edges: workflow.edges.map((e) => ({
@@ -44,8 +48,12 @@ export function exportAst(workflow: Workflow): unknown {
       to_port: e.to.port,
       kind: e.kind,
     })),
-    entry:
-      workflow.nodes.find((n) => nodeCategory(n) === "trigger")?.id ?? null,
+    entries: (() => {
+      const origin = workflow.nodes.find((n) => nodeCategory(n) === "origin");
+      if (origin) return [origin.id];
+      const trigger = workflow.nodes.find((n) => nodeCategory(n) === "trigger");
+      return trigger ? [trigger.id] : [];
+    })(),
   };
 }
 

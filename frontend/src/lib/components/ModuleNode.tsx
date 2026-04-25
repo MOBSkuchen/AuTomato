@@ -24,8 +24,19 @@ function ModuleNode({ data, id, selected }: NodeProps) {
   const isTrigger = category === "trigger";
   const isReturn = category === "return";
   const isPure = category === "pure";
+  const isDispatch = category === "dispatch";
   const hasExecIn = !isTrigger && !isPure;
-  const hasExecOut = !isReturn && !isPure;
+  const hasExecOut = !isReturn && !isPure && !isDispatch;
+  const dispatchInputName = comp?.dispatchInputName;
+  const dispatchInputWired = useWorkflow((s) =>
+    !!dispatchInputName &&
+    s.workflow.edges.some(
+      (e) =>
+        e.kind === "data" &&
+        e.to.nodeId === instance.id &&
+        e.to.port === dispatchInputName,
+    ),
+  );
   const removeNode = useWorkflow((s) => s.removeNode);
 
   const accent =
@@ -35,7 +46,9 @@ function ModuleNode({ data, id, selected }: NodeProps) {
         ? "#e0a94c"
         : isPure
           ? "var(--t-custom)"
-          : "var(--accent)";
+          : isDispatch
+            ? "#7dd3fc"
+            : "var(--accent)";
 
   return (
     <>
@@ -93,62 +106,93 @@ function ModuleNode({ data, id, selected }: NodeProps) {
 
         <div className="ports">
           <div className="col inputs">
-            {comp?.inputs.map((input) => (
-              <div
-                className={
-                  "port in" + (input.consumption === "passthrough" ? " pt" : "")
-                }
-                key={input.name}
-              >
-                <Handle
-                  type="target"
-                  position={Position.Left}
-                  id={input.name}
-                  style={{
-                    background: typeColor(input.type),
-                    borderColor: typeColor(input.type),
-                    width: 12,
-                    height: 12,
-                  }}
-                />
-                <span className="label">
-                  {input.name}
-                  {input.consumption === "consumed" && (
-                    <span className="cons-mark" title="consumed">●</span>
-                  )}
-                  {input.consumption === "passthrough" && (
-                    <span className="cons-mark pt" title="passthrough">○</span>
-                  )}
-                </span>
-                <span className="ty" style={{ color: typeColor(input.type) }}>
-                  {typeLabel(input.type)}
-                </span>
-              </div>
-            ))}
+            {comp?.inputs.map((input) => {
+              const isDispatchInput =
+                isTrigger && input.name === dispatchInputName;
+              const requiredUnwired =
+                isDispatchInput &&
+                comp?.dispatchMode === "required" &&
+                !dispatchInputWired;
+              return (
+                <div
+                  className={
+                    "port in" +
+                    (input.consumption === "passthrough" ? " pt" : "") +
+                    (isDispatchInput ? " dispatch-in" : "") +
+                    (requiredUnwired ? " err" : "")
+                  }
+                  key={input.name}
+                >
+                  <Handle
+                    type="target"
+                    position={Position.Left}
+                    id={input.name}
+                    style={{
+                      background: typeColor(input.type),
+                      borderColor: typeColor(input.type),
+                      width: isDispatchInput ? 14 : 12,
+                      height: isDispatchInput ? 14 : 12,
+                      outline: isDispatchInput ? "1px solid #7dd3fc" : undefined,
+                    }}
+                  />
+                  <span className="label">
+                    {input.name}
+                    {isDispatchInput && (
+                      <span className="cons-mark" title="dispatch input" style={{ color: "#7dd3fc" }}>⇲</span>
+                    )}
+                    {input.consumption === "consumed" && !isDispatchInput && (
+                      <span className="cons-mark" title="consumed">●</span>
+                    )}
+                    {input.consumption === "passthrough" && (
+                      <span className="cons-mark pt" title="passthrough">○</span>
+                    )}
+                    {requiredUnwired && (
+                      <span className="cons-mark" title="required" style={{ color: "var(--err)" }}>!</span>
+                    )}
+                  </span>
+                  <span className="ty" style={{ color: typeColor(input.type) }}>
+                    {typeLabel(input.type)}
+                  </span>
+                </div>
+              );
+            })}
             {comp?.inputs.length === 0 && (
               <div className="port-empty">no inputs</div>
             )}
           </div>
           <div className="col outputs">
-            {comp?.outputs.map((output) => (
-              <div className="port out" key={output.name}>
-                <span className="ty" style={{ color: typeColor(output.type) }}>
-                  {typeLabel(output.type)}
-                </span>
-                <span className="label">{output.name}</span>
-                <Handle
-                  type="source"
-                  position={Position.Right}
-                  id={output.name}
-                  style={{
-                    background: typeColor(output.type),
-                    borderColor: typeColor(output.type),
-                    width: 12,
-                    height: 12,
-                  }}
-                />
-              </div>
-            ))}
+            {comp?.outputs.map((output) => {
+              const isDispatchOut =
+                isDispatch &&
+                comp?.dispatchType?.kind === "custom" &&
+                output.type.kind === "custom" &&
+                output.type.name === comp.dispatchType.name;
+              return (
+                <div className={"port out" + (isDispatchOut ? " dispatch-out" : "")} key={output.name}>
+                  <span className="ty" style={{ color: typeColor(output.type) }}>
+                    {typeLabel(output.type)}
+                  </span>
+                  <span className="label">
+                    {output.name}
+                    {isDispatchOut && (
+                      <span className="cons-mark" title="dispatch source" style={{ color: "#7dd3fc" }}>⇱</span>
+                    )}
+                  </span>
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={output.name}
+                    style={{
+                      background: typeColor(output.type),
+                      borderColor: typeColor(output.type),
+                      width: isDispatchOut ? 14 : 12,
+                      height: isDispatchOut ? 14 : 12,
+                      outline: isDispatchOut ? "1px solid #7dd3fc" : undefined,
+                    }}
+                  />
+                </div>
+              );
+            })}
             {comp?.inputs
               .filter((i) => i.consumption === "passthrough")
               .map((input) => (

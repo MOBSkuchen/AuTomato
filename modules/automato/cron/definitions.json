@@ -11,6 +11,7 @@
       "name": "on_tick",
       "category": "trigger",
       "trigger_style": "polling",
+      "dispatch_mode": "none",
       "description": "Fires at each scheduled tick; emits an RFC3339 timestamp.",
       "tweaks": [
         {

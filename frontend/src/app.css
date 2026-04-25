@@ -467,6 +467,10 @@ h3 { font-size: 13px; color: var(--fg-1); text-transform: uppercase; letter-spac
 .react-flow__edge.exec-edge .react-flow__edge-path {
   stroke-width: 2.2;
 }
+.react-flow__edge.exec-origin .react-flow__edge-path {
+  stroke-width: 2.5;
+  stroke-dasharray: 6 3;
+}
 
 /* Category tinting for node headers */
 .an-node.cat-trigger { border-top: 3px solid var(--ok); }
@@ -474,6 +478,15 @@ h3 { font-size: 13px; color: var(--fg-1); text-transform: uppercase; letter-spac
 .an-node.cat-logic { border-top: 3px solid var(--t-custom); }
 .an-node.cat-pure { border-top: 3px dashed var(--fg-2); }
 .an-node.cat-action { border-top: 3px solid var(--accent); }
+.an-node.cat-dispatch { border-top: 3px solid #7dd3fc; }
+.an-node.cat-origin { border-top: 3px solid #a78bfa; }
+
+/* Dispatch port emphasis */
+.port.dispatch-in .label,
+.port.dispatch-out .label { font-weight: 600; }
+.port.dispatch-in.err {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+}
 
 /* Struct (construct / destruct) nodes */
 .an-struct {

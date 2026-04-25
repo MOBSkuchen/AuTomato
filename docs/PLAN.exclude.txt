@@ -66,3 +66,7 @@ Nothing. Each saved module is a version of said module, so we don't handle the s
 
 Start with the implementation of the rest of the spec (for adding modules via the UI) and with these changes.
 Make sure that when adding modules we also want the user to be able to select a version.
+
+Todo:
+ - catch / show used before impl errors in the UI
+ - show warnings for unwired control flow

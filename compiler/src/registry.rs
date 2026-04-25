@@ -81,9 +81,20 @@ struct RawComponent {
     #[serde(default)]
     error_type: Option<TypeRef>,
     #[serde(rename = "impl")]
-    implementation: String,
+    #[serde(default)]
+    implementation: Option<String>,
     #[serde(default)]
     tweaks: Vec<RawTweak>,
+    #[serde(default)]
+    dispatch_mode: Option<String>,
+    #[serde(default)]
+    dispatch_type: Option<TypeRef>,
+    #[serde(default)]
+    dispatch_input_name: Option<String>,
+    #[serde(default)]
+    run_method: Option<String>,
+    #[serde(default)]
+    register_methods: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,6 +144,13 @@ pub enum TriggerStyle {
     Callback,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchMode {
+    Required,
+    Either,
+    None,
+}
+
 #[derive(Debug, Clone)]
 pub struct ComponentDef {
     pub name: String,
@@ -142,8 +160,13 @@ pub struct ComponentDef {
     pub inputs: Vec<PortDef>,
     pub outputs: Vec<PortDef>,
     pub error_type: Option<TypeRef>,
-    pub impl_function: String,
+    pub impl_function: Option<String>,
     pub tweaks: Vec<TweakDef>,
+    pub dispatch_mode: Option<DispatchMode>,
+    pub dispatch_type: Option<TypeRef>,
+    pub dispatch_input_name: Option<String>,
+    pub run_method: Option<String>,
+    pub register_methods: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -369,6 +392,18 @@ pub fn load_manifest(dir: &Path, meta: &Path, defs: &Path) -> Result<ModuleManif
                 other
             ),
         };
+        let dispatch_mode = match c.dispatch_mode.as_deref() {
+            Some("required") => Some(DispatchMode::Required),
+            Some("either") => Some(DispatchMode::Either),
+            Some("none") => Some(DispatchMode::None),
+            None => None,
+            Some(other) => bail!(
+                "module '{}': component '{}' has unknown dispatch_mode '{}'",
+                meta_raw.id,
+                c.name,
+                other
+            ),
+        };
         let inputs: Vec<PortDef> = c
             .inputs
             .into_iter()
@@ -401,6 +436,11 @@ pub fn load_manifest(dir: &Path, meta: &Path, defs: &Path) -> Result<ModuleManif
                 error_type: c.error_type,
                 impl_function: c.implementation,
                 tweaks,
+                dispatch_mode,
+                dispatch_type: c.dispatch_type,
+                dispatch_input_name: c.dispatch_input_name,
+                run_method: c.run_method,
+                register_methods: c.register_methods,
             },
         );
     }

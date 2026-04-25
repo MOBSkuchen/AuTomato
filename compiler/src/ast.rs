@@ -12,6 +12,8 @@ pub struct Workflow {
     pub edges: Vec<Edge>,
     #[serde(default)]
     pub entry: Option<String>,
+    #[serde(default)]
+    pub entries: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +73,9 @@ pub enum NodeKind {
     Loop,
     Construct,
     Destruct,
+    Origin,
+    Exit,
+    EnvConst,
 }
 
 impl Default for NodeKind {
@@ -87,6 +92,8 @@ pub enum NodeCategory {
     Pure,
     Logic,
     Return,
+    Origin,
+    Dispatch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +133,14 @@ pub struct NodeInstance {
     pub target_type: Option<String>,
     #[serde(default)]
     pub tweak_values: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub env_key: Option<String>,
+    #[serde(default)]
+    pub env_default: Option<String>,
+    #[serde(default)]
+    pub dispatch_mode: Option<String>,
+    #[serde(default)]
+    pub dispatch_type: Option<TypeRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,6 +171,8 @@ pub const DATA_ERRVAL: &str = "__errval__";
 pub const DATA_LOOP_ITEM: &str = "item";
 pub const DATA_CONSTRUCT_OUT: &str = "value";
 pub const DATA_DESTRUCT_IN: &str = "value";
+pub const DISPATCH_PORT: &str = "__dispatch__";
+pub const DATA_EXIT_CODE: &str = "code";
 
 pub fn is_passthrough_port(port: &str) -> bool {
     port.ends_with("__pt")
