@@ -51,4 +51,18 @@ Then check if this is feasible and what to look out for.
 Ask questions if you have any.
 And finally create an implementation plan in ./docs and then start with the implementation.
 
-claude --resume d422543a-7d56-4d6e-96b8-e25fc2a359c5
+As this is not a package manager, we want to do the following things:
+All packages, which are not published officially by us or a trusted source (e.g. automato/...) will only act as a cached user-defined module.
+This means that we encode their source as a base64 string base64("git" or "http-tar" + URL + VERSION) and set that as their ID.
+We only keep modules for a limited amount of time. The backend keeps track of how often a modoule is requested. If a module has not been requested for 24 hours, we delete it from the storage.
+To allow this, the client must store information on the layout of the module and what the source is.
+
+What I mean by layout:
+Components used in the workflow must be saved to ensure their inputs/outputs and tweaks are valid. To protect against invalidation when the source has been changed, we
+validate the workflow after loading in.
+
+What happens when the source changes?
+Nothing. Each saved module is a version of said module, so we don't handle the source to changing.
+
+Start with the implementation of the rest of the spec (for adding modules via the UI) and with these changes.
+Make sure that when adding modules we also want the user to be able to select a version.
