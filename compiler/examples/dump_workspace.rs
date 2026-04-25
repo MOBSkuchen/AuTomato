@@ -1,6 +1,7 @@
 use compiler::compile_to_workspace;
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use compiler::workspace::DockerConfig;
 
 fn main() {
     let modules_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -43,6 +44,6 @@ fn main() {
         ]
     });
 
-    let _ws = compile_to_workspace(&wf, &modules_dir, &out).unwrap();
+    let _ws = compile_to_workspace(&wf, &modules_dir, &out, &DockerConfig::disabled()).unwrap();
     println!("workspace written to {}", out.display());
 }
