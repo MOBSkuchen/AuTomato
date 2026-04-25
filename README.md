@@ -75,8 +75,8 @@ Per the project convention, source code carries no inline comments; all explanat
 ## Roadmap (short)
 
 - ✔ Add configurable components
-- 🇼🇮🇵 Auto fetch modules from `./modules`
-- ✖ Make modules downloadable via a single URL
+- ✔ Auto fetch modules from `./modules`
+- ✔ Make modules downloadable via a single URL
 - ✖ Add more basic modules
 - ✖ Add AI integration
 - ✖ Be able to AI generate a module from an API documentation
