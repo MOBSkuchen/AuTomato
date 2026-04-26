@@ -5,7 +5,8 @@
       "fields": [
         { "name": "url", "type": { "kind": "string" } },
         { "name": "method", "type": { "kind": "string" } },
-        { "name": "body", "type": { "kind": "string" } }
+        { "name": "body", "type": { "kind": "string" }},
+        { "name": "headers", "type": { "kind": "dict", "value": { "kind": "string" } }}
       ]
     },
     {

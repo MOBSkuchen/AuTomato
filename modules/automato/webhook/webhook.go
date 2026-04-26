@@ -3,6 +3,7 @@ package webhook
 import (
 	"io"
 	"net/http"
+	"strings"
 )
 
 type HTTPDispatch struct {
@@ -23,7 +24,7 @@ func (d *HTTPDispatch) Register(path string, method HTTPMethod, handler func(HTT
 		body, _ := io.ReadAll(r.Body)
 		_ = r.Body.Close()
 		ctx := HTTPRequestContext{w: w, done: make(chan struct{}, 1)}
-		handler(HTTPRequest{Url: r.URL.String(), Method: r.Method, Body: string(body)}, ctx)
+		handler(HTTPRequest{Url: r.URL.String(), Method: r.Method, Body: string(body), Headers: HeaderToMap(r.Header)}, ctx)
 		select {
 		case <-ctx.done:
 		default:
@@ -37,9 +38,10 @@ func (d *HTTPDispatch) Run() {
 }
 
 type HTTPRequest struct {
-	Url    string
-	Method string
-	Body   string
+	Url     string
+	Method  string
+	Body    string
+	Headers map[string]string
 }
 
 type HTTPMethod string
@@ -62,6 +64,14 @@ type HTTPRequestContext struct {
 	done chan struct{}
 }
 
+func HeaderToMap(h http.Header) map[string]string {
+	result := make(map[string]string)
+	for k, v := range h {
+		result[k] = strings.Join(v, ", ")
+	}
+	return result
+}
+
 func OnRequest(address string, path string, method HTTPMethod, handler func(HTTPRequest, HTTPRequestContext)) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +82,7 @@ func OnRequest(address string, path string, method HTTPMethod, handler func(HTTP
 		body, _ := io.ReadAll(r.Body)
 		_ = r.Body.Close()
 		ctx := HTTPRequestContext{w: w, done: make(chan struct{}, 1)}
-		handler(HTTPRequest{Url: r.URL.String(), Method: r.Method, Body: string(body)}, ctx)
+		handler(HTTPRequest{Url: r.URL.String(), Method: r.Method, Body: string(body), Headers: HeaderToMap(r.Header)}, ctx)
 		select {
 		case <-ctx.done:
 		default:
