@@ -174,7 +174,7 @@ export default function ConfigPanel() {
               : nodeKind === "origin"
                 ? "Entry point for the workflow (equivalent to main)."
                 : nodeKind === "exit"
-                  ? "Terminates the process with an optional exit code."
+                  ? "Terminates the process with an exit code."
                   : nodeKind === "env_const"
                     ? "Reads an environment variable at runtime, falls back to a default."
                     : "Splits a struct into per-field outputs.";
@@ -248,10 +248,17 @@ export default function ConfigPanel() {
 
         {nodeKind === "exit" && (
           <section>
-            <h3>Exit code</h3>
-            <div className="muted">
-              Wire an int to the <code>code</code> input pin, or leave unwired to exit with 0.
-            </div>
+            <TweakRow
+                key="code"
+                tweak={{name: "code", description: "Exit code", type: {kind: "int"}, default: "0"}}
+                value={
+                  node.tweakValues?.["code"] !== undefined
+                      ? node.tweakValues["code"]
+                      : "0"
+                }
+                onChange={(v) => setTweakValue(node.id, "code", v)}
+                enumDef={enumForType({ kind: "int" })}
+            />
           </section>
         )}
 

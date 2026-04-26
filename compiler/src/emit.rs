@@ -16,9 +16,9 @@ pub struct GoFile {
 }
 
 pub fn emit_main(wf: &Workflow, reg: &Registry) -> Result<GoFile> {
-    let mut gen = Generator::new(wf, reg)?;
-    let plan = gen.build()?;
-    Ok(gen.finalize(plan))
+    let mut generator = Generator::new(wf, reg)?;
+    let plan = generator.build()?;
+    Ok(generator.finalize(plan))
 }
 
 struct TriggerFn {
@@ -448,6 +448,8 @@ impl<'a> Generator<'a> {
         {
             let code_expr = self.resolve_source(src_id, &src_port)?;
             self.line(&format!("os.Exit(int({}))", code_expr));
+        } else if let Some(tweak) = node.tweak_values.get("code") && tweak.is_number() {
+            self.line(&format!("os.Exit({})", tweak.as_i64().unwrap()));
         } else {
             self.line("os.Exit(0)");
         }

@@ -8,9 +8,6 @@ type NodeData = { instance: { id: string } };
 function ExitNode({ data, id, selected }: NodeProps) {
   const instance = (data as NodeData).instance;
   const removeNode = useWorkflow((s) => s.removeNode);
-  const wiredCode = useWorkflow((s) =>
-    s.workflow.edges.some((e) => e.to.nodeId === instance.id && e.to.port === DATA_EXIT_CODE),
-  );
 
   return (
     <>
@@ -34,7 +31,6 @@ function ExitNode({ data, id, selected }: NodeProps) {
               />
               <span className="label">code</span>
               <span className="ty" style={{ color: "var(--t-int)" }}>int</span>
-              {!wiredCode && <span className="muted" style={{ fontSize: 11, marginLeft: 4 }}>(optional)</span>}
             </div>
           </div>
           <div className="col outputs" />
