@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import {
   EXEC_IN,
   EXEC_BODY,
@@ -20,19 +20,6 @@ function LoopNode({ data, id, selected }: NodeProps) {
 
   return (
     <>
-      <NodeResizer
-        minWidth={200}
-        minHeight={120}
-        isVisible={selected}
-        lineStyle={{ borderColor: "var(--accent)", borderWidth: 1 }}
-        handleStyle={{
-          width: 6,
-          height: 6,
-          background: "var(--accent)",
-          borderColor: "var(--accent)",
-          borderRadius: 1,
-        }}
-      />
       <div className={"an-loop" + (selected ? " selected" : "") + " cat-logic"}>
         <Handle
           type="target"

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { EXEC_IN, DATA_EXIT_CODE } from "../types";
 import { useWorkflow } from "../store";
 
@@ -14,13 +14,6 @@ function ExitNode({ data, id, selected }: NodeProps) {
 
   return (
     <>
-      <NodeResizer
-        minWidth={160}
-        minHeight={80}
-        isVisible={selected}
-        lineStyle={{ borderColor: "var(--accent)", borderWidth: 1 }}
-        handleStyle={{ width: 6, height: 6, background: "var(--accent)", borderColor: "var(--accent)", borderRadius: 1 }}
-      />
       <div className={"an-node cat-return" + (selected ? " selected" : "")}>
         <Handle type="target" position={Position.Top} id={EXEC_IN} className="exec-handle exec-in" />
         <header style={{ background: "color-mix(in srgb, #e0a94c 18%, var(--bg-3))" }}>

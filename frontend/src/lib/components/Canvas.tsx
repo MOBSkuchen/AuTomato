@@ -59,7 +59,6 @@ export default function Canvas() {
   const selectedNodeId = useWorkflow((s) => s.selectedNodeId);
   const setSelected = useWorkflow((s) => s.setSelected);
   const moveNode = useWorkflow((s) => s.moveNode);
-  const resizeNode = useWorkflow((s) => s.resizeNode);
   const removeNode = useWorkflow((s) => s.removeNode);
   const addEdge = useWorkflow((s) => s.addEdge);
   const removeEdge = useWorkflow((s) => s.removeEdge);
@@ -356,8 +355,6 @@ export default function Canvas() {
       for (const c of changes) {
         if (c.type === "position" && c.position && !c.dragging) {
           moveNode(c.id, c.position);
-        } else if (c.type === "dimensions" && c.dimensions && c.resizing) {
-          resizeNode(c.id, c.dimensions);
         } else if (c.type === "select") {
           if (c.selected) setSelected(c.id);
           else if (selectedNodeId === c.id) setSelected(null);
@@ -366,7 +363,7 @@ export default function Canvas() {
         }
       }
     },
-    [moveNode, resizeNode, removeNode, setSelected, selectedNodeId],
+    [moveNode, removeNode, setSelected, selectedNodeId],
   );
 
   const onEdgesChange = useCallback(

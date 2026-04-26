@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { EXEC_OUT } from "../types";
 import { useWorkflow } from "../store";
 
@@ -8,13 +8,6 @@ function OriginNode({ id, selected }: NodeProps) {
 
   return (
     <>
-      <NodeResizer
-        minWidth={180}
-        minHeight={80}
-        isVisible={selected}
-        lineStyle={{ borderColor: "var(--accent)", borderWidth: 1 }}
-        handleStyle={{ width: 6, height: 6, background: "var(--accent)", borderColor: "var(--accent)", borderRadius: 1 }}
-      />
       <div className={"an-node cat-origin" + (selected ? " selected" : "")}>
         <header style={{ background: "color-mix(in srgb, #a78bfa 18%, var(--bg-3))" }}>
           <div className="title">

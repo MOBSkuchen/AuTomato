@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { findComponent, findModule } from "../registry";
 import {
   typeColor,
@@ -52,19 +52,6 @@ function ModuleNode({ data, id, selected }: NodeProps) {
 
   return (
     <>
-      <NodeResizer
-        minWidth={220}
-        minHeight={120}
-        isVisible={selected}
-        lineStyle={{ borderColor: "var(--accent)", borderWidth: 1 }}
-        handleStyle={{
-          width: 6,
-          height: 6,
-          background: "var(--accent)",
-          borderColor: "var(--accent)",
-          borderRadius: 1,
-        }}
-      />
       <div
         className={
           "an-node" +
