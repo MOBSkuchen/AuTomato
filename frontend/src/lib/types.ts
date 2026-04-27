@@ -39,6 +39,7 @@ export interface TweakDef {
   description?: string;
   type: WorkflowType;
   default?: unknown;
+  inputFallback?: boolean;
 }
 
 export type DispatchMode = "required" | "either" | "none";
@@ -177,6 +178,18 @@ export function isPassthroughHandle(portId: string): boolean {
 
 export function passthroughSourceInput(portId: string): string | null {
   return portId.endsWith("__pt") ? portId.slice(0, -"__pt".length) : null;
+}
+
+export function tweakInputHandleId(tweakName: string): string {
+  return `__tweak__${tweakName}`;
+}
+
+export function isTweakInputHandle(portId: string): boolean {
+  return portId.startsWith("__tweak__");
+}
+
+export function tweakNameFromHandle(portId: string): string | null {
+  return portId.startsWith("__tweak__") ? portId.slice("__tweak__".length) : null;
 }
 
 export function typeLabel(t: WorkflowType): string {

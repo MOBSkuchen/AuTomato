@@ -5,6 +5,7 @@ import {
   typeColor,
   typeLabel,
   passthroughHandleId,
+  tweakInputHandleId,
   EXEC_IN,
   EXEC_OUT,
   EXEC_ERR,
@@ -37,6 +38,13 @@ function ModuleNode({ data, id, selected }: NodeProps) {
         e.to.port === dispatchInputName,
     ),
   );
+  const wiredTweakPorts = useWorkflow((s) => {
+    const s2 = new Set<string>();
+    for (const e of s.workflow.edges) {
+      if (e.kind === "data" && e.to.nodeId === instance.id) s2.add(e.to.port);
+    }
+    return s2;
+  });
   const removeNode = useWorkflow((s) => s.removeNode);
 
   const accent =
@@ -143,7 +151,39 @@ function ModuleNode({ data, id, selected }: NodeProps) {
                 </div>
               );
             })}
-            {comp?.inputs.length === 0 && (
+            {comp?.tweaks
+              ?.filter((t) => t.inputFallback)
+              .map((tweak) => {
+                const handleId = tweakInputHandleId(tweak.name);
+                const wired = wiredTweakPorts.has(handleId);
+                return (
+                  <div
+                    className={"port in tweak-fallback" + (wired ? " wired" : "")}
+                    key={handleId}
+                  >
+                    <Handle
+                      type="target"
+                      position={Position.Left}
+                      id={handleId}
+                      style={{
+                        background: wired ? typeColor(tweak.type) : "var(--bg-3)",
+                        borderColor: typeColor(tweak.type),
+                        borderStyle: "dashed",
+                        width: 12,
+                        height: 12,
+                      }}
+                    />
+                    <span className="label">
+                      {tweak.name}
+                      <span className="cons-mark" title="optional tweak input">◌</span>
+                    </span>
+                    <span className="ty" style={{ color: typeColor(tweak.type) }}>
+                      {typeLabel(tweak.type)}
+                    </span>
+                  </div>
+                );
+              })}
+            {comp?.inputs.length === 0 && !(comp?.tweaks?.some((t) => t.inputFallback)) && (
               <div className="port-empty">no inputs</div>
             )}
           </div>

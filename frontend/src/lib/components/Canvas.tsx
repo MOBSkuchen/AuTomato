@@ -29,6 +29,8 @@ import {
   isExecPort,
   isPassthroughHandle,
   passthroughSourceInput,
+  isTweakInputHandle,
+  tweakNameFromHandle,
   EXEC_IN,
   EXEC_ERR,
   DATA_ERRVAL,
@@ -244,6 +246,10 @@ export default function Canvas() {
           return input?.type;
         }
         return comp.outputs.find((o) => o.name === port)?.type;
+      }
+      if (isTweakInputHandle(port)) {
+        const tweakName = tweakNameFromHandle(port);
+        return comp.tweaks?.find((t) => t.name === tweakName && t.inputFallback)?.type;
       }
       return comp.inputs.find((i) => i.name === port)?.type;
     },

@@ -9,6 +9,7 @@ import {
 import {
   typeColor,
   typeLabel,
+  tweakInputHandleId,
   EXEC_ERR,
   type NodeKind,
   type WorkflowType,
@@ -421,19 +422,24 @@ export default function ConfigPanel() {
       {comp.tweaks && comp.tweaks.length > 0 && (
         <section>
           <h3>Tweaks</h3>
-          {comp.tweaks.map((t) => (
-            <TweakRow
-              key={t.name}
-              tweak={t}
-              value={
-                node.tweakValues?.[t.name] !== undefined
-                  ? node.tweakValues[t.name]
-                  : t.default
-              }
-              onChange={(v) => setTweakValue(node.id, t.name, v)}
-              enumDef={enumForType(t.type)}
-            />
-          ))}
+          {comp.tweaks.map((t) => {
+            const handleId = t.inputFallback ? tweakInputHandleId(t.name) : null;
+            const wired = handleId ? wiredInputs.has(handleId) : false;
+            return (
+              <TweakRow
+                key={t.name}
+                tweak={t}
+                value={
+                  node.tweakValues?.[t.name] !== undefined
+                    ? node.tweakValues[t.name]
+                    : t.default
+                }
+                onChange={(v) => setTweakValue(node.id, t.name, v)}
+                enumDef={enumForType(t.type)}
+                wired={wired}
+              />
+            );
+          })}
         </section>
       )}
 
@@ -641,9 +647,10 @@ interface TweakRowProps {
   value: unknown;
   onChange: (v: unknown) => void;
   enumDef?: CustomTypeDef;
+  wired?: boolean;
 }
 
-function TweakRow({ tweak, value, onChange, enumDef }: TweakRowProps) {
+function TweakRow({ tweak, value, onChange, enumDef, wired }: TweakRowProps) {
   const ty = tweak.type;
   const color = typeColor(ty);
   return (
@@ -653,14 +660,22 @@ function TweakRow({ tweak, value, onChange, enumDef }: TweakRowProps) {
         <span className="in-ty" style={{ color }}>
           {typeLabel(ty)}
         </span>
-        <span className="pill literal">tweak</span>
+        {tweak.inputFallback ? (
+          wired
+            ? <span className="pill">wired</span>
+            : <span className="pill literal">tweak (fallback)</span>
+        ) : (
+          <span className="pill literal">tweak</span>
+        )}
       </div>
       {tweak.description && (
         <div className="muted" style={{ fontSize: 11, fontStyle: "normal" }}>
           {tweak.description}
         </div>
       )}
-      {enumDef ? (
+      {wired ? (
+        <div className="muted">Value provided by connected input.</div>
+      ) : enumDef ? (
         <select
           value={typeof value === "string" ? value : ""}
           onChange={(e) => onChange(e.target.value)}
