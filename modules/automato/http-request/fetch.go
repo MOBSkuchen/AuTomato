@@ -16,6 +16,23 @@ type HTTPError struct {
 
 func (e HTTPError) Error() string { return e.Message }
 
+//automato-infer:category=action
+//automato-infer:description=Perform an HTTP request and return the response body + status.
+//automato-infer:tweak=timeoutMS
+//automato-infer:tweak_desc=timeoutMS:Per-request timeout in milliseconds.
+//automato-infer:tweak_default=timeoutMS:30000
+//automato-infer:tweak=userAgent
+//automato-infer:tweak_desc=userAgent:User-Agent header value.
+//automato-infer:tweak_default=userAgent:AuTomato/0.2
+//automato-infer:tweak=followRedirects
+//automato-infer:tweak_desc=followRedirects:Whether to follow 3xx redirects automatically.
+//automato-infer:tweak_default=followRedirects:true
+//automato-infer:rename=req:request
+//automato-infer:consumed=req
+//automato-infer:output=0:body
+//automato-infer:output=1:status
+//automato-infer:error=2
+//automato-infer:error_type=custom/HTTPError
 func Fetch(timeoutMS int64, userAgent string, followRedirects bool, req webhook.HTTPRequest) (string, int64, error) {
 	method := req.Method
 	if method == "" {

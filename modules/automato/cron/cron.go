@@ -1,3 +1,5 @@
+// Package cron provides HTTP trigger and dispatch components
+// for the AuTomato workflow engine.
 package cron
 
 import "time"
@@ -13,6 +15,18 @@ const (
 
 func (u CronUnit) String() string { return string(u) }
 
+//automato-infer:category=trigger
+//automato-infer:trigger_style=polling
+//automato-infer:dispatch_mode=none
+//automato-infer:description=Fires at each scheduled tick; emits an RFC3339 timestamp.
+//automato-infer:tweak=interval
+//automato-infer:tweak_desc=interval:Interval value (combined with unit).
+//automato-infer:tweak_default=interval:1
+//automato-infer:tweak=unit
+//automato-infer:tweak_desc=unit:Time unit for the interval.
+//automato-infer:tweak_default=unit:s
+//automato-infer:output=0:fired_at
+//automato-infer:output_skip=1
 func OnTick(interval int64, unit CronUnit) (string, bool) {
 	d := time.Second
 	switch unit {
