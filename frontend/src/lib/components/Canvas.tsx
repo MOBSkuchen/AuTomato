@@ -359,7 +359,7 @@ export default function Canvas() {
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
       for (const c of changes) {
-        if (c.type === "position" && c.position && !c.dragging) {
+        if (c.type === "position" && c.position) {
           moveNode(c.id, c.position);
         } else if (c.type === "select") {
           if (c.selected) setSelected(c.id);

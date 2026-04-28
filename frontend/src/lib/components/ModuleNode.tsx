@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { findComponent, findModule } from "../registry";
 import {
@@ -38,13 +38,14 @@ function ModuleNode({ data, id, selected }: NodeProps) {
         e.to.port === dispatchInputName,
     ),
   );
-  const wiredTweakPorts = useWorkflow((s) => {
+  const edges = useWorkflow((s) => s.workflow.edges);
+  const wiredTweakPorts = useMemo(() => {
     const s2 = new Set<string>();
-    for (const e of s.workflow.edges) {
+    for (const e of edges) {
       if (e.kind === "data" && e.to.nodeId === instance.id) s2.add(e.to.port);
     }
     return s2;
-  });
+  }, [edges, instance.id]);
   const removeNode = useWorkflow((s) => s.removeNode);
 
   const accent =
