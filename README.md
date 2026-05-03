@@ -10,6 +10,12 @@ no long-running orchestrator, no runtime editor dependency.
 
 See [`PROJECT_SPEC.md`](docs/PROJECT_SPEC.md) (Note: Documentation may become outdated during development) for the full design. This README is a quickstart.
 
+This project is a sister project of [`VisuAlis`](https://github.com/MOBSkuchen/VisuAlis), which provides the UI designer.
+
+### Licensing
+This project is licensed under the terms and conditions of the Creative Commons Attribution-NonCommercial 4.0 International Public
+License as provided in [`LICENSE`](LICENSE)
+
 ## Status
 
 Currently reworking how modules work and adding support for TinyGo (embedded).
