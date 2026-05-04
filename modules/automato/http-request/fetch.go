@@ -38,7 +38,7 @@ func Fetch(timeoutMS int64, userAgent string, followRedirects bool, req webhook.
 	if method == "" {
 		method = "GET"
 	}
-	httpReq, err := http.NewRequest(method, req.Url, strings.NewReader(req.Body))
+	httpReq, err := http.NewRequest(method.String(), req.Url, strings.NewReader(req.Body))
 	if err != nil {
 		return "", 0, HTTPError{Code: 0, Message: err.Error()}
 	}

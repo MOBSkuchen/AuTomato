@@ -8,9 +8,8 @@ import (
 
 type HTTPRequest struct {
 	Url     string
-	Method  HTTPMethod //automato-infer:string
+	Method  HTTPMethod
 	Body    string
-	Headers map[string]string
 }
 
 type HTTPMethod string
@@ -47,7 +46,7 @@ func (d *HTTPDispatch) Register(path string, method HTTPMethod, handler func(HTT
 		body, _ := io.ReadAll(r.Body)
 		_ = r.Body.Close()
 		ctx := HTTPRequestContext{w: w, done: make(chan struct{}, 1)}
-		handler(HTTPRequest{Url: r.URL.String(), Method: HTTPMethod(r.Method), Body: string(body), Headers: HeaderToMap(r.Header)}, ctx)
+		handler(HTTPRequest{Url: r.URL.String(), Method: HTTPMethod(r.Method), Body: string(body)}, ctx)
 		select {
 		case <-ctx.done:
 		default:
@@ -94,7 +93,7 @@ func OnRequest(address string, path string, method HTTPMethod, handler func(HTTP
 		body, _ := io.ReadAll(r.Body)
 		_ = r.Body.Close()
 		ctx := HTTPRequestContext{w: w, done: make(chan struct{}, 1)}
-		handler(HTTPRequest{Url: r.URL.String(), Method: HTTPMethod(r.Method), Body: string(body), Headers: HeaderToMap(r.Header)}, ctx)
+		handler(HTTPRequest{Url: r.URL.String(), Method: HTTPMethod(r.Method), Body: string(body)}, ctx)
 		select {
 		case <-ctx.done:
 		default:
