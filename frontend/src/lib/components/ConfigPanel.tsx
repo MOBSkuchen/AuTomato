@@ -53,13 +53,11 @@ export default function ConfigPanel() {
 
   const allTypes: CustomTypeDef[] = useMemo(() => {
     const fromModules = allKnownCustomTypes();
-    const seen = new Set(fromModules.map((t) => t.name));
-    const out = [...fromModules];
-    for (const t of workflow.customTypes) {
-      if (!seen.has(t.name)) out.push(t);
-    }
-    return out;
-  }, [workflow.customTypes]);
+    const typeMap = new Map<string, CustomTypeDef>();
+    fromModules.forEach(t => typeMap.set(t.name, t));
+    workflow.customTypes.forEach(t => typeMap.set(t.name, t));
+    return Array.from(typeMap.values());
+  }, [workflow.customTypes, allKnownCustomTypes]);
 
   const availableStructTargets = allTypes.filter(
     (t) => (t.kind ?? "struct") === "struct" && !t.sealed,
